@@ -1,7 +1,9 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi e Prezzi
-Versione aggiornata per supportare Products_all.csv (12 colonne)
-CON FILTRO TRADEMARK ESTERNO
+Versione aggiornata:
+1. Supporta Products_all.csv (12 colonne)
+2. Filtra MCWS tramite Valid_Trademarks.txt
+3. LOGICA ESCLUSIVA BBR: Se il Trademark è BBR-MODELS, non confronta mai con MCWS.
 """
 
 import pandas as pd
@@ -127,18 +129,16 @@ def get_markup_for_brand(tags, brand_name, markup_dict):
 # ==========================================
 def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file):
     """
-    Elabora l'inventario filtrando per marchi validi (da file esterno).
+    Elabora l'inventario filtrando per marchi validi e gestendo priorità BBR.
     """
     
     # --- 1. PREPARAZIONE DATI ---
     
-    # Carica Markup
+    # Carica Markup e Trademarks
     markup_rules = load_markup_rules(markup_file)
-    
-    # Carica Marchi Validi
     valid_trademarks = load_trademarks(valid_trademarks_file)
     
-    # BBR Lookup (Sempre valido)
+    # BBR Lookup
     bbr_lookup = {}
     if not df_bbr.empty:
         df_bbr.columns = [c.strip() for c in df_bbr.columns]
@@ -152,13 +152,13 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                     'qty': qty_val
                 }
 
-    # MCWS Lookup (FILTRATO PER TRADEMARK)
+    # MCWS Lookup (Già filtrato per marchi validi in ingresso)
     mcws_lookup = {}
     if not df_mcws.empty:
         df_mcws.columns = [c.strip().replace('"', '') for c in df_mcws.columns]
         for _, row in df_mcws.iterrows():
             
-            # FILTRO TRADEMARK
+            # FILTRO TRADEMARK (Listino MCWS)
             trademark = str(row.get(COL_MCWS_TRADEMARK, '')).strip().upper()
             if valid_trademarks and trademark not in valid_trademarks:
                 continue
@@ -192,6 +192,9 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             sku = str(row.get(COL_SKU, '')).strip()
             tags = str(row.get(COL_TAGS, ''))
             
+            # Recupera il Trademark dal file Shopify
+            current_trademark = str(row.get(COL_BRAND, '')).strip().upper()
+            
             current_qty = clean_qty(row.get(COL_QTY, 0))
             current_cost = clean_currency(row.get(COL_COST, 0))
             current_price = clean_currency(row.get(COL_PRICE, 0))
@@ -206,49 +209,60 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             
             # --- LOGICA IDENTIFICAZIONE FORNITORE ---
             
-            # 1. CHECK BBR
+            # 1. CONTROLLO PRIORITARIO BBR (File BBR_export)
             if sku in bbr_lookup:
                 found_supplier = True
                 supplier_data = bbr_lookup[sku]
                 
-                # Costo
+                # Aggiorna Costo BBR
                 supplier_cost = supplier_data['cost']
                 if supplier_cost > 0 and abs(supplier_cost - current_cost) > 0.01:
                     new_cost = supplier_cost
                     changes.append(f"COST(BBR): {current_cost:.2f}->{new_cost:.2f}")
                     stats['updated_cost'] += 1
                 
-                # Qta
+                # Aggiorna Qta BBR
                 supplier_qty = supplier_data['qty']
                 if supplier_qty != current_qty:
                     new_qty = supplier_qty
                     changes.append(f"QTY(BBR): {current_qty}->{new_qty}")
                     stats['updated_qty'] += 1
+                    
                 supplier_brand = "BBR"
 
-            # 2. CHECK MCWS (Già filtrato in fase di caricamento lookup)
+            # 2. CONTROLLO MCWS (Solo se NON trovato in BBR)
             elif not found_supplier:
-                match_obj = None
-                if sku in mcws_lookup:
-                    match_obj = mcws_lookup[sku]
                 
-                if match_obj:
-                    found_supplier = True
-                    # Costo
-                    supplier_cost = match_obj['cost']
-                    if supplier_cost > 0 and abs(supplier_cost - current_cost) > 0.01:
-                        new_cost = supplier_cost
-                        changes.append(f"COST(MCWS): {current_cost:.2f}->{new_cost:.2f}")
-                        stats['updated_cost'] += 1
+                # >>> NUOVA REGOLA DI ESCLUSIONE BBR <<<
+                # Se il prodotto Shopify ha trademark BBR-MODELS, NON controllare in MCWS.
+                # Consideriamo "BBR" generico per sicurezza (BBR, BBR-MODELS, BBR MODELS)
+                is_bbr_trademark = 'BBR' in current_trademark
+                
+                if not is_bbr_trademark:
+                    # Procedi con confronto MCWS solo se NON è BBR
                     
-                    # Qta
-                    if current_qty == 0:
-                        new_qty = 1 
-                        changes.append(f"QTY(MCWS): 0->1")
-                        stats['updated_qty'] += 1
-                    supplier_brand = match_obj['brand']
+                    match_obj = None
+                    if sku in mcws_lookup:
+                        match_obj = mcws_lookup[sku]
+                    
+                    if match_obj:
+                        found_supplier = True
+                        # Aggiorna Costo MCWS
+                        supplier_cost = match_obj['cost']
+                        if supplier_cost > 0 and abs(supplier_cost - current_cost) > 0.01:
+                            new_cost = supplier_cost
+                            changes.append(f"COST(MCWS): {current_cost:.2f}->{new_cost:.2f}")
+                            stats['updated_cost'] += 1
+                        
+                        # Aggiorna Qta MCWS
+                        if current_qty == 0:
+                            new_qty = 1 
+                            changes.append(f"QTY(MCWS): 0->1")
+                            stats['updated_qty'] += 1
+                        supplier_brand = match_obj['brand']
             
             # --- 3. AGGIORNAMENTO PREZZI ---
+            # Solo se il costo è cambiato
             if abs(new_cost - current_cost) > 0.01:
                 if found_supplier:
                     markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
@@ -266,7 +280,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             output_df.at[index, COL_COST] = new_cost
             output_df.at[index, COL_PRICE] = new_price
             
-            # Stats Legacy
+            # Stats Legacy per report
             if new_qty > 0 and current_qty == 0:
                 stats['inventory']['updates_1'] += 1
             elif new_qty == 0 and current_qty > 0:
