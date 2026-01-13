@@ -291,7 +291,7 @@ if ready_to_process:
             try:
                 if process_mode == "Formato Originale (3 file)":
                     # ==========================================
-                    # ELABORAZIONE FORMATO LEGACY (3 file)
+                    # ELABORAZIONE FORMATO LEGACY (3 file) - SOLO INVENTARIO
                     # ==========================================
                     
                     # Leggi i file caricati
@@ -299,11 +299,10 @@ if ready_to_process:
                     df_mcws = load_dataframe(file_mcws)
                     df_bbr = load_dataframe(file_bbr)
                     
-                    # Esegui la logica di processing (versione legacy)
-                    #result_df, stats, duplicate_report, log_messages = process_inventory(
-                        #df_shopify, df_mcws, df_bbr
-                    f_output, all_stats, duplicate_report, log_messages = process_inventory_v03(
-                        df_shopify, df_mcws, df_bbr, files['markup']
+                    # USIAMO LA FUNZIONE ORIGINALE (importata da logic.py)
+                    # Questa funzione NON richiede il file markup e NON tocca i prezzi
+                    df_output, all_stats, duplicate_report, log_messages = process_inventory(
+                        df_shopify, df_mcws, df_bbr
                     )
                     
                     # Formato legacy: mostra statistiche originali
@@ -319,10 +318,12 @@ if ready_to_process:
                     df_mcws = load_dataframe(file_mcws)
                     df_bbr = load_dataframe(file_bbr)
                     
-                    # Esegui la logica di processing (versione V03)
-                    result_df, stats, duplicate_report, log_messages = process_inventory_v03(
-                        df_shopify, df_mcws, df_bbr
-                    )
+                   # Esegui la logica di processing (versione V03)
+                    # APRIAMO IL FILE MARKUP LOCALE
+                    with open('Vroomi_Markup.txt', 'r', encoding='utf-8') as f_markup:
+                        result_df, stats, duplicate_report, log_messages = process_inventory_v03(
+                            df_shopify, df_mcws, df_bbr, f_markup
+                        )
                     
                     # Normalizza le statistiche per il formato legacy
                     # V03 stats ha struttura: {'inventory': {'total': x, 'updates_1': y, 'updates_0': z}}
