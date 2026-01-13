@@ -395,7 +395,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
     stats['qty_changes'] = stats['updated_qty']
     stats['cost_changes'] = stats['updated_cost']
 
-    # === FILTRO FINALE ===
+    # === FILTRO FINALE: RESTITUISCI SOLO LE RIGHE MODIFICATE ===
     df_changes_only = output_df[output_df[COL_CHANGE_LOG] != '']
     
     # Rimuovi colonna Change Log se non richiesta
