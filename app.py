@@ -120,35 +120,46 @@ st.markdown("---")
 # SELEZIONE MODALITÀ DI ELABORAZIONE
 # ==========================================
 
+# Inizializza la chiave di stato per la modalità
+if 'process_mode' not in st.session_state:
+    st.session_state['process_mode'] = "Formato Originale (3 file)"
+
 st.markdown('<div class="sub-header">0. Seleziona Formato</div>', unsafe_allow_html=True)
 
 col_mode_legacy, col_mode_v02 = st.columns(2)
 
 with col_mode_legacy:
-    st.markdown("""
-    <div class="metric-card" style="border: 1px solid #4CAF50; background-color: #E8F5E9;">
-    <h3 style="margin: 0; color: #2E7D32;">📄 Formato Originale</h3>
-    <p style="margin: 0.5rem 0 0 0;">3 file separati</p>
-    <p style="margin: 0; font-size: 0.8rem;">Shopify + MCWS + BBR</p>
-    </div>
-    """, unsafe_allow_html=True)
+    if st.button("📄 Formato Originale (3 file)", use_container_width=True, 
+                 type=("primary" if st.session_state['process_mode'] == "Formato Originale (3 file)" else "secondary")):
+        st.session_state['process_mode'] = "Formato Originale (3 file)"
+        st.rerun()
 
 with col_mode_v02:
-    st.markdown("""
-    <div class="metric-card" style="border: 1px solid #2196F3; background-color: #E3F2FD;">
-    <h3 style="margin: 0; color: #1565C0;">📦 Formato V02</h3>
-    <p style="margin: 0.5rem 0 0 0;">File unificato</p>
-    <p style="margin: 0; font-size: 0.8rem;">Products.csv (12 colonne)</p>
-    </div>
-    """, unsafe_allow_html=True)
+    if st.button("📦 Formato V02 (1 file Products.csv)", use_container_width=True,
+                 type=("primary" if st.session_state['process_mode'] == "Formato V02 (1 file Products.csv)" else "secondary")):
+        st.session_state['process_mode'] = "Formato V02 (1 file Products.csv)"
+        st.rerun()
 
-# Selettore modalità
-process_mode = st.radio(
-    "Scegli il formato di elaborazione:",
-    ["Formato Originale (3 file)", "Formato V02 (1 file Products.csv)"],
-    horizontal=True,
-    label_visibility="collapsed"
-)
+# Usa la modalità dallo stato della sessione
+process_mode = st.session_state['process_mode']
+
+st.markdown(f"**Modalità selezionata:** {process_mode}")
+
+# Reset file caricati quando cambia la modalità
+if 'last_process_mode' not in st.session_state:
+    st.session_state['last_process_mode'] = process_mode
+
+if st.session_state['last_process_mode'] != process_mode:
+    # Reset dei file caricati
+    if 'file_shopify' in st.session_state:
+        del st.session_state['file_shopify']
+    if 'file_mcws' in st.session_state:
+        del st.session_state['file_mcws']
+    if 'file_bbr' in st.session_state:
+        del st.session_state['file_bbr']
+    if 'file_products' in st.session_state:
+        del st.session_state['file_products']
+    st.session_state['last_process_mode'] = process_mode
 
 st.markdown("---")
 
@@ -166,22 +177,29 @@ with col_upload:
         file_shopify = st.file_uploader(
             "📁 **Shopify_Products.csv** (Target)",
             type=["csv"],
+            key="file_shopify",
             help="File export prodotti Shopify con colonne 'Variant SKU' e 'Variant Inventory Qty'"
         )
         
         file_mcws = st.file_uploader(
             "📁 **MCWS_stocklist.csv** (Source A)",
             type=["csv"],
+            key="file_mcws",
             help="Listino MCWS con colonne 'Our Code', 'Code' e 'Trademark'"
         )
         
         file_bbr = st.file_uploader(
             "📁 **BBR_export** (Source B)",
             type=["csv", "xls", "xlsx"],
+            key="file_bbr",
             help="Export BBR (formato CSV, XLS o XLSX) con colonne 'DescrizioneVariante' e 'QtaResidua'"
         )
         
-        files_loaded = file_shopify is not None and file_mcws is not None and file_bbr is not None
+        files_loaded = (
+            (file_shopify is not None) and 
+            (file_mcws is not None) and 
+            (file_bbr is not None)
+        )
         
         OUTPUT_PREFIX = OUTPUT_PREFIX_LEGACY
         
@@ -190,6 +208,7 @@ with col_upload:
         file_products = st.file_uploader(
             "📁 **Products.csv** (File Unificato 12 colonne)",
             type=["csv"],
+            key="file_products",
             help="File unificato con colonne: SKU, Variant SKU, Variant Inventory Qty, Variant Cost, Variant Price, Tag, CostoBBRModels, Net Price, Trademark, BRAND, Code, QTY"
         )
         
