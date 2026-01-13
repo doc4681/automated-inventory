@@ -126,40 +126,22 @@ if 'process_mode' not in st.session_state:
 
 st.markdown('<div class="sub-header">0. Seleziona Formato</div>', unsafe_allow_html=True)
 
-col_mode_legacy, col_mode_v02 = st.columns(2)
+# Mostra due opzioni ben visibili con radio button
+process_mode = st.radio(
+    "Scegli il formato di elaborazione:",
+    ["Formato Originale (3 file)", "Formato V02 (1 file Products.csv)"],
+    index=0 if st.session_state['process_mode'] == "Formato Originale (3 file)" else 1,
+    horizontal=False
+)
 
-with col_mode_legacy:
-    if st.button("📄 Formato Originale (3 file)", use_container_width=True, 
-                 type=("primary" if st.session_state['process_mode'] == "Formato Originale (3 file)" else "secondary")):
-        st.session_state['process_mode'] = "Formato Originale (3 file)"
-        st.rerun()
-
-with col_mode_v02:
-    if st.button("📦 Formato V02 (1 file Products.csv)", use_container_width=True,
-                 type=("primary" if st.session_state['process_mode'] == "Formato V02 (1 file Products.csv)" else "secondary")):
-        st.session_state['process_mode'] = "Formato V02 (1 file Products.csv)"
-        st.rerun()
-
-# Usa la modalità dallo stato della sessione
-process_mode = st.session_state['process_mode']
-
-st.markdown(f"**Modalità selezionata:** {process_mode}")
-
-# Reset file caricati quando cambia la modalità
-if 'last_process_mode' not in st.session_state:
-    st.session_state['last_process_mode'] = process_mode
-
-if st.session_state['last_process_mode'] != process_mode:
-    # Reset dei file caricati
-    if 'file_shopify' in st.session_state:
-        del st.session_state['file_shopify']
-    if 'file_mcws' in st.session_state:
-        del st.session_state['file_mcws']
-    if 'file_bbr' in st.session_state:
-        del st.session_state['file_bbr']
-    if 'file_products' in st.session_state:
-        del st.session_state['file_products']
-    st.session_state['last_process_mode'] = process_mode
+# Aggiorna lo stato quando cambia
+if process_mode != st.session_state['process_mode']:
+    st.session_state['process_mode'] = process_mode
+    # Reset file caricati quando cambia la modalità
+    for key in ['file_shopify', 'file_mcws', 'file_bbr', 'file_products']:
+        if key in st.session_state:
+            del st.session_state[key]
+    st.rerun()
 
 st.markdown("---")
 
@@ -173,26 +155,28 @@ with col_upload:
     st.markdown('<div class="sub-header">1. Carica i File</div>', unsafe_allow_html=True)
     
     if process_mode == "Formato Originale (3 file)":
-        # Modalità Originale: 3 file separati
+        # Modalità Originale: 3 file separati (Shopify 6 colonne)
+        st.info("📄 **Formato Originale**: Carica i 3 file separati")
+        
         file_shopify = st.file_uploader(
-            "📁 **Shopify_Products.csv** (Target)",
+            "📁 **Shopify_Products.csv** (6 colonne)",
             type=["csv"],
             key="file_shopify",
-            help="File export prodotti Shopify con colonne 'Variant SKU' e 'Variant Inventory Qty'"
+            help="File export prodotti Shopify standard"
         )
         
         file_mcws = st.file_uploader(
-            "📁 **MCWS_stocklist.csv** (Source A)",
+            "📁 **MCWS_stocklist.csv**",
             type=["csv"],
             key="file_mcws",
-            help="Listino MCWS con colonne 'Our Code', 'Code' e 'Trademark'"
+            help="Listino MCWS"
         )
         
         file_bbr = st.file_uploader(
-            "📁 **BBR_export** (Source B)",
+            "📁 **BBR_export**",
             type=["csv", "xls", "xlsx"],
             key="file_bbr",
-            help="Export BBR (formato CSV, XLS o XLSX) con colonne 'DescrizioneVariante' e 'QtaResidua'"
+            help="Export BBR"
         )
         
         files_loaded = (
@@ -204,15 +188,35 @@ with col_upload:
         OUTPUT_PREFIX = OUTPUT_PREFIX_LEGACY
         
     else:
-        # Modalità V02: File unificato Products.csv
-        file_products = st.file_uploader(
-            "📁 **Products.csv** (File Unificato 12 colonne)",
+        # Modalità V02: 3 file separati (Shopify 12 colonne)
+        st.info("📦 **Formato V02**: Carica i 3 file (Products.csv ha 12 colonne)")
+        
+        file_shopify = st.file_uploader(
+            "📁 **Products.csv** (12 colonne)",
             type=["csv"],
-            key="file_products",
-            help="File unificato con colonne: SKU, Variant SKU, Variant Inventory Qty, Variant Cost, Variant Price, Tag, CostoBBRModels, Net Price, Trademark, BRAND, Code, QTY"
+            key="file_shopify",
+            help="File export Shopify con 12 colonne: SKU, Variant SKU, Variant Inventory Qty, Variant Cost, Variant Price, Tag, CostoBBRModels, Net Price, Trademark, BRAND, Code, QTY"
         )
         
-        files_loaded = file_products is not None
+        file_mcws = st.file_uploader(
+            "📁 **MCWS_stocklist.csv**",
+            type=["csv"],
+            key="file_mcws",
+            help="Listino MCWS"
+        )
+        
+        file_bbr = st.file_uploader(
+            "📁 **BBR_export**",
+            type=["csv", "xls", "xlsx"],
+            key="file_bbr",
+            help="Export BBR"
+        )
+        
+        files_loaded = (
+            (file_shopify is not None) and 
+            (file_mcws is not None) and 
+            (file_bbr is not None)
+        )
         
         OUTPUT_PREFIX = OUTPUT_PREFIX_V02
 
@@ -305,17 +309,21 @@ if ready_to_process:
                     
                 else:
                     # ==========================================
-                    # ELABORAZIONE FORMATO V02 (1 file)
+                    # ELABORAZIONE FORMATO V02 (3 file - Shopify ha 12 colonne)
                     # ==========================================
                     
-                    # Leggi il file Products.csv
-                    df_products = load_dataframe(file_products)
+                    # Leggi i file caricati
+                    df_shopify = load_dataframe(file_shopify)  # Products.csv con 12 colonne
+                    df_mcws = load_dataframe(file_mcws)
+                    df_bbr = load_dataframe(file_bbr)
                     
                     # Esegui la logica di processing (versione V02)
-                    result_df, stats = process_inventory_v02(df_products)
+                    result_df, stats, duplicate_report, log_messages = process_inventory_v02(
+                        df_shopify, df_mcws, df_bbr
+                    )
                     
-                    # Formato V02: stats è un dizionario semplificato
-                    show_legacy_stats = False
+                    # Formato V02: mostra statistiche originali
+                    show_legacy_stats = True
                 
                 # ==========================================
                 # RISULTATI
