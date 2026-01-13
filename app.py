@@ -8,9 +8,9 @@ from logic import (
     process_inventory, OUTPUT_PREFIX as OUTPUT_PREFIX_LEGACY,
     COL_SHOPIFY_SKU, COL_SHOPIFY_QTY
 )
-# Import nuova logica (V03)
+# Import nuova logica (V03 + Markup Only)
 from logic_v03 import (
-    process_inventory_v03, OUTPUT_PREFIX as OUTPUT_PREFIX_V03,
+    process_inventory_v03, process_markup_only, OUTPUT_PREFIX as OUTPUT_PREFIX_V03,
     COL_SHOPIFY_SKU, COL_SHOPIFY_QTY, COL_SHOPIFY_COST, COL_SHOPIFY_PRICE,
     COL_SHOPIFY_TAGS, COL_COSTO_BBR, COL_NET_PRICE, COL_BRAND,
     COL_MCWS_CODE, COL_MCWS_TRADEMARK, COL_BBR_QTY, COL_CHANGE_LOG
@@ -81,10 +81,15 @@ if 'process_mode' not in st.session_state:
 
 st.markdown('<div class="sub-header">0. Seleziona Formato</div>', unsafe_allow_html=True)
 
+# Definisci le opzioni
+MODE_ORIGINAL = "Formato Originale (3 file)"
+MODE_V03 = "Formato V03 (1 file Products.csv)"
+MODE_MARKUP = "Adeguamento Markup (Solo Prezzi)"
+
 process_mode = st.radio(
     "Scegli il formato di elaborazione:",
-    ["Formato Originale (3 file)", "Formato V03 (1 file Products.csv)"],
-    index=0 if st.session_state['process_mode'] == "Formato Originale (3 file)" else 1,
+    [MODE_ORIGINAL, MODE_V03, MODE_MARKUP],
+    index=0 if st.session_state['process_mode'] == MODE_ORIGINAL else (1 if st.session_state['process_mode'] == MODE_V03 else 2),
     horizontal=False
 )
 
@@ -106,34 +111,43 @@ col_upload, col_info = st.columns([1, 1])
 with col_upload:
     st.markdown('<div class="sub-header">1. Carica i File</div>', unsafe_allow_html=True)
     
-    if process_mode == "Formato Originale (3 file)":
+    if process_mode == MODE_ORIGINAL:
         st.info("📄 **Formato Originale**: Carica i 3 file separati")
         file_shopify = st.file_uploader("📁 **Shopify_Products.csv** (6 colonne)", type=["csv"], key="file_shopify")
         file_mcws = st.file_uploader("📁 **MCWS_stocklist.csv**", type=["csv"], key="file_mcws")
         file_bbr = st.file_uploader("📁 **BBR_export**", type=["csv", "xls", "xlsx"], key="file_bbr")
         files_loaded = (file_shopify and file_mcws and file_bbr)
         OUTPUT_PREFIX = OUTPUT_PREFIX_LEGACY
-    else:
+        
+    elif process_mode == MODE_V03:
         st.info("📦 **Formato V03**: Carica i 3 file (Products.csv ha 12 colonne)")
         file_shopify = st.file_uploader("📁 **Products.csv** (12 colonne)", type=["csv"], key="file_shopify")
         file_mcws = st.file_uploader("📁 **MCWS_stocklist.csv**", type=["csv"], key="file_mcws")
         file_bbr = st.file_uploader("📁 **BBR_export**", type=["csv", "xls", "xlsx"], key="file_bbr")
         files_loaded = (file_shopify and file_mcws and file_bbr)
         OUTPUT_PREFIX = OUTPUT_PREFIX_V03
+        
+    elif process_mode == MODE_MARKUP:
+        st.info("🏷️ **Adeguamento Markup**: Carica solo Products.csv")
+        file_shopify = st.file_uploader("📁 **Products.csv** (12 colonne)", type=["csv"], key="file_shopify")
+        files_loaded = (file_shopify is not None)
+        OUTPUT_PREFIX = "MARKUP_UPDATE"
 
 with col_info:
     st.markdown('<div class="sub-header">2. Configurazione</div>', unsafe_allow_html=True)
     
-    # OPZIONE CHANGE LOG (Nuovo Checkbox)
-    include_log = st.checkbox(
-        "📝 **Includi colonna 'Change Log' nel file output**",
-        value=True,
-        help="Se selezionato, il file CSV finale includerà la colonna con i dettagli delle modifiche. Deseleziona per avere un file pulito per Shopify."
-    )
+    # OPZIONE CHANGE LOG (Solo per V03 e Markup)
+    if process_mode != MODE_ORIGINAL:
+        include_log = st.checkbox(
+            "📝 **Includi colonna 'Change Log' nel file output**",
+            value=True,
+            help="Se selezionato, il file CSV finale includerà la colonna con i dettagli delle modifiche."
+        )
+    else:
+        include_log = True
 
     st.write("---")
     
-    # Mostra lista trademarks caricata dal file
     try:
         with open('Valid_Trademarks.txt', 'r', encoding='utf-8') as f:
             trademarks_content = f.read().splitlines()
@@ -147,10 +161,13 @@ with col_info:
         else:
             st.warning("File Valid_Trademarks.txt non trovato o vuoto!")
     
-    if process_mode == "Formato Originale (3 file)":
-        st.markdown("""<div class="info-box"><b>Come funziona:</b><br>1. Carica i 3 file CSV<br>2. Clicca "Avvia Elaborazione"<br>3. Filtra per Trademark nel file txt<br>4. Scarica il file aggiornato</div>""", unsafe_allow_html=True)
-    else:
-        st.markdown("""<div class="info-box"><b>Come funziona V03:</b><br>1. Carica i file<br>2. Calcola Costi e Prezzi<br>3. Filtra per Trademark nel file txt<br>4. Scarica aggiornamento</div>""", unsafe_allow_html=True)
+    # Istruzioni dinamiche
+    if process_mode == MODE_ORIGINAL:
+        st.markdown("""<div class="info-box"><b>Formato Originale:</b><br>Sync solo quantità (3 file).</div>""", unsafe_allow_html=True)
+    elif process_mode == MODE_V03:
+        st.markdown("""<div class="info-box"><b>Formato V03:</b><br>Sync Quantità + Costi + Prezzi dinamici.<br>Output: Solo righe modificate.</div>""", unsafe_allow_html=True)
+    elif process_mode == MODE_MARKUP:
+        st.markdown("""<div class="info-box"><b>Adeguamento Markup:</b><br>Ricalcola TUTTI i prezzi basandosi su Costo * Markup (Brand Validi).<br>Output: File intero.</div>""", unsafe_allow_html=True)
 
 # ==========================================
 # ELABORAZIONE
@@ -163,40 +180,50 @@ if files_loaded:
     col_btn, col_status = st.columns([1, 2])
     
     with col_btn:
-        process_btn = st.button("🚀 **Avvia Sincronizzazione**", type="primary", use_container_width=True)
+        process_btn = st.button("🚀 **Avvia Elaborazione**", type="primary", use_container_width=True)
     
     if process_btn:
         with st.spinner('Elaborazione in corso...'):
             try:
                 df_shopify_loaded = load_dataframe(file_shopify)
-                df_mcws_loaded = load_dataframe(file_mcws)
-                df_bbr_loaded = load_dataframe(file_bbr)
                 
-                # APRI FILE TRADEMARKS
+                # APRI FILE NECESSARI
                 f_trademarks = open('Valid_Trademarks.txt', 'r', encoding='utf-8')
                 
-                if process_mode == "Formato Originale (3 file)":
-                    # LOGICA ORIGINALE (Con filtro file esterno)
+                # --- CASO 1: ORIGINALE ---
+                if process_mode == MODE_ORIGINAL:
+                    df_mcws_loaded = load_dataframe(file_mcws)
+                    df_bbr_loaded = load_dataframe(file_bbr)
+                    
                     result_df, stats, duplicate_report, log_messages = process_inventory(
                         df_shopify_loaded, df_mcws_loaded, df_bbr_loaded, f_trademarks
                     )
                     show_legacy_stats = True
+                
+                # --- CASO 2: V03 ---
+                elif process_mode == MODE_V03:
+                    df_mcws_loaded = load_dataframe(file_mcws)
+                    df_bbr_loaded = load_dataframe(file_bbr)
                     
-                else:
-                    # LOGICA V03 (Passiamo il parametro include_change_log)
                     with open('Vroomi_Markup.txt', 'r', encoding='utf-8') as f_markup:
                         result_df, stats, duplicate_report, log_messages = process_inventory_v03(
                             df_shopify_loaded, df_mcws_loaded, df_bbr_loaded, f_markup, f_trademarks,
-                            include_change_log=include_log # <--- PASSA IL VALORE DEL CHECKBOX
+                            include_change_log=include_log
                         )
-                    
-                    if 'inventory' in stats:
-                        stats_for_legacy = stats['inventory']
-                    else:
-                        stats_for_legacy = {'total': 0, 'updates_1': 0, 'updates_0': 0}
+                    stats_for_legacy = stats['inventory']
                     show_legacy_stats = True
-                
-                f_trademarks.close() # Chiudi file
+
+                # --- CASO 3: MARKUP ONLY ---
+                elif process_mode == MODE_MARKUP:
+                    with open('Vroomi_Markup.txt', 'r', encoding='utf-8') as f_markup:
+                        result_df, stats, log_messages = process_markup_only(
+                            df_shopify_loaded, f_markup, f_trademarks
+                        )
+                    # Adattiamo stats per la visualizzazione
+                    duplicate_report = []
+                    show_legacy_stats = False
+
+                f_trademarks.close()
                 
                 # ==========================================
                 # VISUALIZZAZIONE RISULTATI
@@ -205,38 +232,32 @@ if files_loaded:
                 st.markdown('<div class="sub-header">4. Risultati</div>', unsafe_allow_html=True)
                 
                 if result_df is not None and len(result_df) > 0:
-                    m1, m2, m3, m4 = st.columns(4)
-                    if process_mode == "Formato Originale (3 file)":
-                        total_sku = stats['total']
-                        upd_1 = stats['updates_1']
-                        upd_0 = stats['updates_0']
-                    else:
-                        total_sku = stats['inventory']['total']
-                        upd_1 = stats['inventory']['updates_1']
-                        upd_0 = stats['inventory']['updates_0']
-
-                    m1.metric("Totale SKU Shopify", total_sku)
-                    m2.metric("Aggiornamenti → 1", upd_1, delta_color="normal")
-                    m3.metric("Aggiornamenti → 0", upd_0, delta_color="inverse")
-                    m4.metric("Totale Modifiche", upd_1 + upd_0)
+                    
+                    # Metriche
+                    if show_legacy_stats:
+                        m1, m2, m3, m4 = st.columns(4)
+                        if process_mode == MODE_ORIGINAL:
+                            tot, u1, u0 = stats['total'], stats['updates_1'], stats['updates_0']
+                        else: # V03
+                            tot, u1, u0 = stats['inventory']['total'], stats['inventory']['updates_1'], stats['inventory']['updates_0']
                         
+                        m1.metric("Totale SKU", tot)
+                        m2.metric("Attivati", u1)
+                        m3.metric("Disattivati", u0)
+                        m4.metric("Modifiche Tot", u1 + u0)
+                    else:
+                        # Metriche Markup Only
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("Totale Righe", stats['processed'])
+                        m2.metric("Prezzi Aggiornati", stats['updated_price'])
+                        m3.metric("Saltati (No Brand/Cost)", stats['skipped'])
+
                     with st.expander("📋 Log Elaborazione"):
                         for msg in log_messages:
                             st.text(msg)
                         
                     if duplicate_report:
-                        st.markdown('<div class="warning-box">', unsafe_allow_html=True)
-                        st.markdown("**⚠️ Trovati duplicati nel listino MCWS:**")
-                        df_duplicates = pd.DataFrame(duplicate_report)
-                        st.dataframe(df_duplicates, use_container_width=True)
-                        st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    if process_mode != "Formato Originale (3 file)":
-                        st.write("---")
-                        st.markdown("**Dettagli V03 (Costi/Prezzi):**")
-                        c1, c2 = st.columns(2)
-                        c1.metric("Variazioni Costo", stats.get('cost_changes', 0))
-                        c2.metric("Variazioni Prezzo", stats.get('updated_price', 0))
+                        st.warning("Trovati duplicati (vedi sopra).")
                     
                     st.markdown("### 📥 Download")
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -244,10 +265,9 @@ if files_loaded:
                     st.dataframe(result_df.head(10), use_container_width=True)
                     csv_output = result_df.to_csv(index=False).encode('utf-8')
                     st.download_button("✅ **Scarica File**", csv_output, output_filename, "text/csv", type="primary", use_container_width=True)
-                    st.success("Elaborazione completata con successo!")
+                    st.success("Operazione completata!")
                 else:
-                    st.balloons()
-                    st.success("✅ Nessun aggiornamento necessario!")
+                    st.warning("Nessun risultato generato.")
                 
             except Exception as e:
                 st.error("Errore elaborazione:")
@@ -256,4 +276,4 @@ else:
     st.info("Attesa caricamento file...")
 
 st.markdown("---")
-st.caption("🔧 Inventory Sync WebApp v2.5")
+st.caption("🔧 Inventory Sync WebApp v3.0")
