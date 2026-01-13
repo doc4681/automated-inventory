@@ -1,10 +1,13 @@
 """
-logic_v03.py - Inventory Sync con Gestione Dinamica Costi e Prezzi
-Versione DEFINITIVA (Con Arrotondamento .90):
+logic_v03.py - Inventory Sync con Gestione Dinamica Costi, Prezzi e SALE
+Versione DEFINITIVA (Con gestione SALE e Compare At Price):
 1. Identifica i prodotti BBR tramite TAGS.
 2. QTA BBR: 1 (se >0) o 0 (se missing).
 3. COSTI: Aggiorna solo se il fornitore ha un costo valido.
-4. PREZZI: Prezzo = Costo * Markup -> Arrotondato a .90.
+4. GESTIONE PREZZI & SALE:
+   - Se Costo Scende: CompareAt = VecchioPrezzo, Tag += SALE.
+   - Se Costo Sale: CompareAt = Vuoto, Tag -= SALE.
+   - Arrotondamento sempre a .90.
 5. Markup Loader robusto.
 6. Check SKU+Brand per evitare collisioni.
 """
@@ -26,6 +29,7 @@ COL_SHOPIFY_SKU = 'Variant SKU'
 COL_SHOPIFY_QTY = 'Variant Inventory Qty'
 COL_SHOPIFY_COST = 'Variant Cost'
 COL_SHOPIFY_PRICE = 'Variant Price'
+COL_SHOPIFY_COMPARE = 'Variant Compare At Price' # Nuova colonna
 COL_SHOPIFY_TAGS = 'Tags'
 
 # Colonne aggiuntive
@@ -38,6 +42,7 @@ COL_SKU = COL_SHOPIFY_SKU
 COL_QTY = COL_SHOPIFY_QTY
 COL_COST = COL_SHOPIFY_COST
 COL_PRICE = COL_SHOPIFY_PRICE
+COL_COMPARE = COL_SHOPIFY_COMPARE
 COL_TAGS = COL_SHOPIFY_TAGS
 
 # Colonne Fornitori
@@ -58,18 +63,13 @@ COL_MCWS_EAN = 'EAN'
 # ==========================================
 
 def normalize_string(s):
-    """
-    Rimuove spazi, trattini e caratteri speciali.
-    Es. "SUN-STAR" -> "SUNSTAR"
-    """
+    """Rimuove spazi, trattini e caratteri speciali."""
     if pd.isna(s):
         return ""
     return re.sub(r'[^A-Z0-9]', '', str(s).upper())
 
 def clean_currency(value):
-    """
-    Pulisce e converte la valuta in float in modo sicuro.
-    """
+    """Pulisce e converte la valuta in float in modo sicuro."""
     if pd.isna(value) or value == '':
         return 0.0
     if isinstance(value, (int, float)):
@@ -100,24 +100,38 @@ def clean_qty(value):
         return 0
 
 def round_price_to_90(price):
-    """
-    Arrotonda il prezzo sempre per eccesso a .90
-    Es: 23.20 -> 23.90
-    Es: 23.65 -> 23.90
-    Es: 23.95 -> 24.90
-    """
+    """Arrotonda il prezzo sempre per eccesso a .90."""
     if price <= 0:
         return 0.0
-    
     integer_part = int(price)
     decimal_part = price - integer_part
-    
-    # Se i decimali sono già > 0.90 (es. 0.95), saltiamo all'intero successivo + .90
-    # Usiamo 0.90001 per evitare problemi di virgola mobile con 0.90 esatto
     if decimal_part > 0.90001:
         return float(integer_part + 1.90)
     else:
         return float(integer_part + 0.90)
+
+def add_sale_tag(tags_str):
+    """Aggiunge ', SALE' ai tag se non esiste."""
+    if pd.isna(tags_str): tags_str = ""
+    tags_list = [t.strip() for t in str(tags_str).split(',') if t.strip()]
+    
+    # Controlla se SALE esiste già (case insensitive)
+    has_sale = any(t.upper() == 'SALE' for t in tags_list)
+    
+    if not has_sale:
+        tags_list.append("SALE")
+        
+    return ", ".join(tags_list)
+
+def remove_sale_tag(tags_str):
+    """Rimuove 'SALE' dai tag se esiste."""
+    if pd.isna(tags_str): return ""
+    tags_list = [t.strip() for t in str(tags_str).split(',') if t.strip()]
+    
+    # Filtra via SALE
+    new_list = [t for t in tags_list if t.upper() != 'SALE']
+    
+    return ", ".join(new_list)
 
 def check_brand_compatibility(shopify_tags, supplier_brand):
     """Verifica coerenza Brand normalizzata."""
@@ -140,9 +154,7 @@ def check_brand_compatibility(shopify_tags, supplier_brand):
     return False
 
 def load_markup_rules(markup_file_content):
-    """
-    Carica le regole di markup in modo ROBUSTO.
-    """
+    """Carica le regole di markup in modo ROBUSTO."""
     markup_dict = {}
     default_markup = 1.50
     markup_dict['DEFAULT'] = default_markup
@@ -200,12 +212,10 @@ def load_trademarks(file_obj):
 
 def get_markup_for_brand(tags, brand_name, markup_dict):
     """Recupera markup con fallback."""
-    # 1. Prova Brand Fornitore
     if brand_name:
         norm = normalize_string(brand_name)
         if norm in markup_dict: return markup_dict[norm]
         
-    # 2. Prova Tags Shopify
     if pd.notna(tags):
         for tag in str(tags).split(','):
             norm = normalize_string(tag)
@@ -266,7 +276,11 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
     output_df = df_shopify.copy()
     if COL_CHANGE_LOG not in output_df.columns:
         output_df[COL_CHANGE_LOG] = ''
-        
+    
+    # Assicurati che le colonne target esistano
+    if COL_COMPARE not in output_df.columns:
+        output_df[COL_COMPARE] = ''
+
     for index, row in output_df.iterrows():
         try:
             stats['processed'] += 1
@@ -278,11 +292,14 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             current_qty = clean_qty(row.get(COL_QTY, 0))
             current_cost = clean_currency(row.get(COL_COST, 0))
             current_price = clean_currency(row.get(COL_PRICE, 0))
+            current_compare = row.get(COL_COMPARE, '') # Può essere stringa o numero
             
-            # Variabili di lavoro
+            # Variabili di lavoro (Default = invariato)
             new_qty = current_qty
             new_cost = current_cost
             new_price = current_price
+            new_compare = current_compare
+            new_tags = tags
             
             changes = []
             found_supplier = False
@@ -296,23 +313,22 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 supplier_data = bbr_lookup[sku]
                 supplier_brand = "BBR"
                 
-                # Costo BBR (Aggiorna solo se valido e diverso)
+                # Costo BBR
                 s_cost = supplier_data['cost']
                 if s_cost > 0 and abs(s_cost - current_cost) > 0.01:
                     new_cost = s_cost
                     changes.append(f"COST(BBR): {current_cost:.2f}->{new_cost:.2f}")
                     stats['updated_cost'] += 1
                 
-                # Qta BBR (Force 1 or 0)
+                # Qta BBR
                 target_qty = 1 if supplier_data['qty'] > 0 else 0
                 if target_qty != current_qty:
                     new_qty = target_qty
                     changes.append(f"QTY(BBR-Force): {current_qty}->{new_qty}")
                     stats['updated_qty'] += 1
 
-            # B. CHECK BBR ORFANO (Tag BBR ma non in file)
+            # B. CHECK BBR ORFANO
             elif 'BBR' in normalize_string(tags):
-                # Se era attivo, mettilo a 0
                 if current_qty > 0:
                     new_qty = 0
                     changes.append(f"QTY(BBR-Missing): {current_qty}->0")
@@ -324,7 +340,6 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 if match_obj:
                     mcws_brand = match_obj['brand']
                     
-                    # Double Check Brand
                     if check_brand_compatibility(tags, mcws_brand):
                         found_supplier = True
                         supplier_brand = mcws_brand
@@ -342,31 +357,50 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                             changes.append("QTY(MCWS): 0->1")
                             stats['updated_qty'] += 1
 
-            # --- FASE 2: AGGIORNAMENTO PREZZI ---
-            # Regola: Se Variant Cost è cambiato -> Calcola Nuovo Prezzo con Arrotondamento .90
+            # --- FASE 2: GESTIONE PREZZI E SALE (SOLO SE COSTO CAMBIA) ---
             
-            cost_has_changed = abs(new_cost - current_cost) > 0.01
+            cost_diff = new_cost - current_cost
+            cost_has_changed = abs(cost_diff) > 0.01
             
             if cost_has_changed and found_supplier:
-                # 1. Trova Markup
+                
+                # 1. Calcola Nuovo Prezzo Target
                 markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
-                
-                # 2. Calcola Prezzo Grezzo
                 raw_price = new_cost * markup
-                
-                # 3. Arrotonda a .90
                 calculated_price = round_price_to_90(raw_price)
                 
-                # 4. Aggiorna
-                if abs(calculated_price - current_price) > 0.01:
+                # LOGICA SALE
+                
+                # CASO 1: Costo SCENDE -> Attiva SALE
+                if new_cost < current_cost:
+                    # Copia Variant Price Originale in Compare At
+                    new_compare = current_price
+                    # Inserisci Nuovo Prezzo Scontato
                     new_price = calculated_price
-                    changes.append(f"PRICE: {current_price:.2f}->{new_price:.2f} (Mk {markup})")
+                    # Aggiungi Tag SALE
+                    new_tags = add_sale_tag(tags)
+                    
+                    changes.append(f"SALE ACTIVATED: Price {current_price}->{new_price}, CompareAt set to {current_price}")
+                    stats['updated_price'] += 1
+
+                # CASO 2: Costo SALE -> Rimuovi SALE
+                elif new_cost > current_cost:
+                    # Cancella Compare At
+                    new_compare = "" 
+                    # Inserisci Nuovo Prezzo Maggiorato
+                    new_price = calculated_price
+                    # Rimuovi Tag SALE
+                    new_tags = remove_sale_tag(tags)
+                    
+                    changes.append(f"PRICE UP (NO SALE): Price {current_price}->{new_price}, CompareAt cleared")
                     stats['updated_price'] += 1
 
             # --- SALVATAGGIO ---
             output_df.at[index, COL_QTY] = new_qty
             output_df.at[index, COL_COST] = new_cost
             output_df.at[index, COL_PRICE] = new_price
+            output_df.at[index, COL_COMPARE] = new_compare
+            output_df.at[index, COL_TAGS] = new_tags
             
             if new_qty > 0 and current_qty == 0:
                 stats['inventory']['updates_1'] += 1
