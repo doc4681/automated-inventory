@@ -549,22 +549,160 @@ def process_costs_and_prices(
 
 
 def process_inventory_v02(
-    shopify_df: pd.DataFrame,
-    mcws_df: pd.DataFrame,
-    bbr_df: pd.DataFrame,
+    products_df: pd.DataFrame,
     markup_file: str = 'Vroomi_Markup.txt'
-) -> Tuple[pd.DataFrame, Dict, List, List]:
+) -> Tuple[pd.DataFrame, Dict]:
     """
-    Processa i 3 file e genera il report di aggiornamento con gestione costi e prezzi.
+    Processa il file unificato Products.csv (12 colonne) e genera il report di aggiornamento.
+    
+    Questa versione lavora con un singolo file unificato contenente tutte le informazioni:
+    - Dati Shopify: SKU, Variant SKU, Qty, Cost, Price, Tags
+    - Dati BBR: CostoBBRModels
+    - Dati MCWS: Net Price, Trademark, Brand, Code, QTY
     
     Args:
-        shopify_df: DataFrame Shopify (Products.csv con 12 colonne)
-        mcws_df: DataFrame MCWS stocklist
-        bbr_df: DataFrame BBR export
+        products_df: DataFrame del file Products.csv (12 colonne)
         markup_file: Percorso file tabella markup MCWS
     
     Returns:
-        Tuple: (df_output, stats, duplicate_report, log_messages)
+        Tuple: (df_output, stats_dict)
+            - df_output: DataFrame con solo le righe con variazioni di QTY o COSTO
+            - stats_dict: Dizionario con statistiche
+    """
+    global MCWS_MARKUP_TABLE
+    
+    log_messages = []
+    stats = {
+        'total_rows': 0,
+        'qty_changes': 0,
+        'cost_changes': 0,
+        'cost_updates_bbr': 0,
+        'cost_updates_mcws': 0,
+        'price_updates_bbr': 0,
+        'price_updates_mcws': 0,
+        'total_bbr': 0,
+        'total_mcws': 0,
+        'missing_markup_brands': set()
+    }
+    
+    log_messages.append("=" * 50)
+    log_messages.append("INVENTORY SYNC V02 - FORMATO UNIFICATO")
+    log_messages.append("=" * 50)
+    
+    # ==========================================
+    # 0. VALIDAZIONE COLONNE
+    # ==========================================
+    required_cols = [
+        COL_SHOPIFY_SKU, COL_SHOPIFY_QTY, COL_SHOPIFY_COST,
+        COL_COSTO_BBR, COL_NET_PRICE
+    ]
+    
+    missing_cols = [c for c in required_cols if c not in products_df.columns]
+    if missing_cols:
+        log_messages.append(f"ERRORE: Colonne mancanti: {missing_cols}")
+        return pd.DataFrame(), stats
+    
+    # ==========================================
+    # 1. CARICA TABELLA MARKUP
+    # ==========================================
+    log_messages.append("0. Caricamento tabella markup MCWS...")
+    load_markup_table(markup_file)
+    log_messages.append(f"   Caricati {len(MCWS_MARKUP_TABLE)} brand dalla tabella markup")
+    
+    # ==========================================
+    # 2. ELABORAZIONE DATI - COSTI E PREZZI
+    # ==========================================
+    log_messages.append("1. Processing Costi e Prezzi...")
+    df_output, cost_price_stats = process_costs_and_prices(products_df.copy(), log_messages)
+    
+    # Merge delle statistiche
+    stats.update({
+        'cost_updates_bbr': cost_price_stats.get('cost_updates_bbr', 0),
+        'cost_updates_mcws': cost_price_stats.get('cost_updates_mcws', 0),
+        'price_updates_bbr': cost_price_stats.get('price_updates_bbr', 0),
+        'price_updates_mcws': cost_price_stats.get('price_updates_mcws', 0),
+        'total_bbr': cost_price_stats.get('total_bbr', 0),
+        'total_mcws': cost_price_stats.get('total_mcws', 0),
+        'missing_markup_brands': cost_price_stats.get('missing_markup_brands', set())
+    })
+    
+    # ==========================================
+    # 3. CONFRONTO QUANTITÀ
+    # ==========================================
+    log_messages.append("2. Confronto Quantità...")
+    
+    if COL_SHOPIFY_QTY not in df_output.columns:
+        log_messages.append(f"ERRORE: Colonna '{COL_SHOPIFY_QTY}' mancante")
+        return pd.DataFrame(), stats
+    
+    # Aggiungi colonna per tracking modifiche
+    df_output['change_count'] = 0
+    df_output['qty_changed'] = False
+    df_output['cost_changed'] = False
+    
+    for idx, row in df_output.iterrows():
+        stats['total_rows'] += 1
+        
+        # Confronto quantità
+        try:
+            shopify_qty = float(str(row.get(COL_SHOPIFY_QTY, 0)).replace(',', '.'))
+        except:
+            shopify_qty = 0
+        
+        try:
+            source_qty = float(str(row.get('QTY', 0)).replace(',', '.'))
+        except:
+            source_qty = 0
+        
+        if shopify_qty != source_qty:
+            df_output.at[idx, COL_SHOPIFY_QTY] = source_qty
+            df_output.at[idx, 'qty_changed'] = True
+            stats['qty_changes'] += 1
+            df_output.at[idx, 'change_count'] = df_output.at[idx, 'change_count'] + 1
+    
+    # ==========================================
+    # 4. FILTRO VARIAZIONI (QTY o COSTO)
+    # ==========================================
+    # Filtra per mantenere solo righe con variazioni di QTY o COSTO
+    df_filtered = df_output[df_output['change_count'] > 0].copy()
+    
+    # Rimuovi colonne temporanee
+    cols_to_drop = ['change_count', 'qty_changed', 'cost_changed']
+    df_filtered = df_filtered.drop(columns=[c for c in cols_to_drop if c in df_filtered.columns])
+    
+    log_messages.append(f"3. Righe finali con variazioni: {len(df_filtered)}")
+    log_messages.append(f"   - Variazioni QTY: {stats['qty_changes']}")
+    log_messages.append(f"   - Variazioni COSTO: {stats['cost_updates_bbr'] + stats['cost_updates_mcws']}")
+    
+    return df_filtered, stats
+        
+        if not sku_clean:
+            stats['total_rows'] += 1
+        else:
+            # Aggiungi anche le righe senza modifiche all'inventario
+            # per poter elaborare costi e prezzi
+            pass
+    
+    # ==========================================
+    # 3. FILTRO VARIAZIONI (QTY o COSTO)
+    # ==========================================
+    # Filtra per mantenere solo righe con variazioni di QTY o COSTO
+    if 'change_count' in df_output.columns:
+        df_output = df_output[df_output['change_count'] > 0].copy()
+        df_output = df_output.drop(columns=['change_count'])
+    
+    log_messages.append(f"4. Righe finali con variazioni: {len(df_output)}")
+    
+    return df_output, stats
+
+
+# ==========================================
+# FUNZIONE DI BACKWARD COMPATIBILITY
+# ==========================================
+
+def process_inventory(shopify_df, mcws_df, bbr_df):
+    """
+    Funzione wrapper per compatibilità con versione precedente.
     """
     global MCWS_MARKUP_TABLE
     
@@ -578,139 +716,55 @@ def process_inventory_v02(
     processed_skus = set()
     
     log_messages.append("=" * 50)
-    log_messages.append("INVENTORY SYNC V02 - GESTIONE COMPLETA")
+    log_messages.append("INVENTORY SYNC V02 - BACKWARD COMPATIBILITY")
     log_messages.append("=" * 50)
-    log_messages.append(f"Trademark validi: {len(VALID_TRADEMARKS)} brand")
     
-    # ==========================================
-    # 1. CARICA TABELLA MARKUP
-    # ==========================================
-    log_messages.append("0. Caricamento tabella markup MCWS...")
-    load_markup_table(markup_file)
-    log_messages.append(f"   Caricati {len(MCWS_MARKUP_TABLE)} brand dalla tabella markup")
+    # Load markup table
+    load_markup_table('Vroomi_Markup.txt')
     
-    # ==========================================
-    # 2. PROCESS MCWS (con filtro trademark e gestione duplicati)
-    # ==========================================
-    log_messages.append("1. Processing MCWS Stocklist...")
-    
+    # Process MCWS
+    log_messages.append("1. Processing MCWS...")
     available_skus = set()
     
-    # Verifica se esiste la colonna Trademark
-    has_trademark = COL_MCWS_TRADEMARK in mcws_df.columns
-    if has_trademark:
-        log_messages.append("   Colonna Trademark trovata, applicazione filtro brand validi")
-    else:
-        log_messages.append("   ATTENZIONE: Colonna Trademark non trovata in MCWS")
-        log_messages.append("   Verranno elaborati TUTTI i prodotti senza filtro Trademark")
-    
-    # GESTIONE DUPLICATI
-    if has_trademark:
-        log_messages.append("   Verifica duplicati...")
-        valid_duplicate_rows, duplicate_report = find_duplicate_codes_with_trademark_check(
-            mcws_df, COL_MCWS_OUR_CODE, COL_MCWS_TRADEMARK
-        )
-        log_messages.append(f"   Trovati {len(duplicate_report)} casi di duplicati")
-    
-    # ELABORAZIONE STANDARD con filtro Trademark
-    log_messages.append("   Elaborazione codici da MCWS...")
-    
-    # Processa colonna 'Our Code'
-    if COL_MCWS_OUR_CODE in mcws_df.columns:
-        for idx, code in enumerate(mcws_df[COL_MCWS_OUR_CODE]):
-            c = clean_code(code)
-            if not c:
-                continue
-            
-            if has_trademark:
-                trademark = clean_trademark(mcws_df.iloc[idx][COL_MCWS_TRADEMARK])
-                if trademark not in VALID_TRADEMARKS:
-                    continue
-            
+    # Process MCWS codes (simplified)
+    for idx, row in mcws_df.iterrows():
+        code = str(row.get(COL_MCWS_CODE, ''))
+        c = clean_code(code)
+        if c:
             available_skus.add(c)
     
-    # Processa colonna 'Code'
-    if COL_MCWS_CODE in mcws_df.columns:
-        for idx, code in enumerate(mcws_df[COL_MCWS_CODE]):
-            c = clean_code(code)
-            if not c:
-                continue
-            
-            if has_trademark:
-                trademark = clean_trademark(mcws_df.iloc[idx][COL_MCWS_TRADEMARK])
-                if trademark not in VALID_TRADEMARKS:
-                    continue
-            
+    # Process BBR
+    log_messages.append("2. Processing BBR...")
+    for idx, row in bbr_df.iterrows():
+        code = str(row.get(COL_BBR_SKU, ''))
+        c = clean_code(code)
+        if c:
             available_skus.add(c)
     
-    log_messages.append(f"   Caricati {len(available_skus)} codici unici da MCWS")
-    
-    # ==========================================
-    # 3. PROCESS BBR
-    # ==========================================
-    log_messages.append("2. Processing BBR Export...")
-    
-    count_start = len(available_skus)
-    
-    if COL_BBR_SKU in bbr_df.columns:
-        for index, row in bbr_df.iterrows():
-            is_available = True
-            
-            if COL_BBR_QTY in bbr_df.columns:
-                try:
-                    qty = float(str(row[COL_BBR_QTY]).replace(',', '.'))
-                    if qty <= 0:
-                        is_available = False
-                except:
-                    pass
-            
-            if is_available:
-                code = row[COL_BBR_SKU]
-                c = clean_code(code)
-                if c:
-                    available_skus.add(c)
-    
-    log_messages.append(f"   Caricati {len(available_skus) - count_start} codici unici da BBR")
-    log_messages.append(f"   TOTALE MASTER SKU LIST: {len(available_skus)} item unici")
-    
-    # ==========================================
-    # 4. COMPARE SHOPIFY (Base)
-    # ==========================================
-    log_messages.append("3. Comparing with Shopify Products (Inventory)...")
-    
-    if COL_SHOPIFY_SKU not in shopify_df.columns:
-        log_messages.append(f"ERRORE: Colonna '{COL_SHOPIFY_SKU}' mancante nel file Shopify")
-        return pd.DataFrame(), all_stats, duplicate_report, log_messages
-    
+    # Compare with Shopify
+    log_messages.append("3. Comparing with Shopify...")
     for idx, row in shopify_df.iterrows():
         all_stats['inventory']['total'] += 1
-        
-        raw_sku = row.get(COL_SHOPIFY_SKU, '')
+        raw_sku = str(row.get(COL_SHOPIFY_SKU, ''))
         sku_clean = clean_code(raw_sku)
         
-        if not sku_clean:
-            continue
-        if sku_clean in processed_skus:
+        if not sku_clean or sku_clean in processed_skus:
             continue
         processed_skus.add(sku_clean)
         
-        # Get current Shopify Qty
         try:
             current_val = float(row.get(COL_SHOPIFY_QTY, 0))
         except:
             current_val = 0
         
         current_logic = 1 if current_val > 0 else 0
-        
-        # Check match in master list
-        is_in_stock_list = sku_clean in available_skus
-        
+        is_in_stock = sku_clean in available_skus
         new_qty = None
         
-        if is_in_stock_list and current_logic == 0:
+        if is_in_stock and current_logic == 0:
             new_qty = 1
             all_stats['inventory']['updates_1'] += 1
-        elif not is_in_stock_list and current_logic == 1:
+        elif not is_in_stock and current_logic == 1:
             new_qty = 0
             all_stats['inventory']['updates_0'] += 1
         
@@ -718,51 +772,14 @@ def process_inventory_v02(
             out_row = row.copy()
             out_row[COL_SHOPIFY_QTY] = new_qty
             rows_output.append(out_row)
-        else:
-            # Aggiungi anche le righe senza modifiche all'inventario
-            # per poter elaborare costi e prezzi
-            rows_output.append(row.copy())
-    
-    log_messages.append(f"   Totale SKU processati: {len(processed_skus)}")
-    log_messages.append(f"   Aggiornamenti inventory necessari: To 1={all_stats['inventory']['updates_1']}, To 0={all_stats['inventory']['updates_0']}")
     
     df_output = pd.DataFrame(rows_output) if rows_output else pd.DataFrame()
     
-    # ==========================================
-    # 5. GESTIONE COSTI E PREZZI
-    # ==========================================
+    # Process costs and prices
     if not df_output.empty:
         log_messages.append("4. Processing Costs and Prices...")
         df_output, cost_price_stats = process_costs_and_prices(df_output, log_messages)
         all_stats['costs_prices'] = cost_price_stats
-    
-    # ==========================================
-    # 6. CHANGE LOG (DEBUG)
-    # ==========================================
-    if not df_output.empty:
-        log_messages.append("5. Generating Change Log...")
-        df_output = add_change_log_column(df_output, shopify_df, log_messages)
-    
-    # ==========================================
-    # 7. RIEPILOGO FINALE
-    # ==========================================
-    log_messages.append("=" * 50)
-    log_messages.append("RIEPILOGO ELABORAZIONE")
-    log_messages.append("=" * 50)
-    log_messages.append(f"SKU Shopify totali: {all_stats['inventory']['total']}")
-    log_messages.append(f"Aggiornamenti inventory (0→1): {all_stats['inventory']['updates_1']}")
-    log_messages.append(f"Aggiornamenti inventory (1→0): {all_stats['inventory']['updates_0']}")
-    
-    if all_stats['costs_prices']:
-        cp = all_stats['costs_prices']
-        log_messages.append(f"Prodotti BBR processati: {cp['total_bbr']}")
-        log_messages.append(f"  - Costi BBR aggiornati: {cp['cost_updates_bbr']}")
-        log_messages.append(f"  - Prezzi BBR aggiornati: {cp['price_updates_bbr']}")
-        log_messages.append(f"Prodotti MCWS processati: {cp['total_mcws']}")
-        log_messages.append(f"  - Costi MCWS aggiornati: {cp['cost_updates_mcws']}")
-        log_messages.append(f"  - Prezzi MCWS aggiornati: {cp['price_updates_mcws']}")
-        if cp['missing_markup_brands']:
-            log_messages.append(f"Brand senza markup: {len(cp['missing_markup_brands'])}")
     
     return df_output, all_stats, duplicate_report, log_messages
 
