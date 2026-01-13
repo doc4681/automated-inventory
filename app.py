@@ -5,8 +5,8 @@ from logic import (
     process_inventory, OUTPUT_PREFIX as OUTPUT_PREFIX_LEGACY, VALID_TRADEMARKS,
     COL_SHOPIFY_SKU, COL_SHOPIFY_QTY
 )
-from logic_v02 import (
-    process_inventory_v02, OUTPUT_PREFIX as OUTPUT_PREFIX_V02,
+from logic_v03 import (
+    process_inventory_v03, OUTPUT_PREFIX as OUTPUT_PREFIX_V03,
     COL_SHOPIFY_SKU, COL_SHOPIFY_QTY, COL_SHOPIFY_COST, COL_SHOPIFY_PRICE,
     COL_SHOPIFY_TAGS, COL_COSTO_BBR, COL_NET_PRICE, COL_BRAND,
     COL_MCWS_CODE, COL_MCWS_TRADEMARK, COL_BBR_QTY, COL_CHANGE_LOG
@@ -129,7 +129,7 @@ st.markdown('<div class="sub-header">0. Seleziona Formato</div>', unsafe_allow_h
 # Mostra due opzioni ben visibili con radio button
 process_mode = st.radio(
     "Scegli il formato di elaborazione:",
-    ["Formato Originale (3 file)", "Formato V02 (1 file Products.csv)"],
+    ["Formato Originale (3 file)", "Formato V03 (1 file Products.csv)"],
     index=0 if st.session_state['process_mode'] == "Formato Originale (3 file)" else 1,
     horizontal=False
 )
@@ -188,8 +188,8 @@ with col_upload:
         OUTPUT_PREFIX = OUTPUT_PREFIX_LEGACY
         
     else:
-        # Modalità V02: 3 file separati (Shopify 12 colonne)
-        st.info("📦 **Formato V02**: Carica i 3 file (Products.csv ha 12 colonne)")
+        # Modalità V03: 3 file separati (Shopify 12 colonne)
+        st.info("📦 **Formato V03**: Carica i 3 file (Products.csv ha 12 colonne)")
         
         file_shopify = st.file_uploader(
             "📁 **Products.csv** (12 colonne)",
@@ -218,7 +218,7 @@ with col_upload:
             (file_bbr is not None)
         )
         
-        OUTPUT_PREFIX = OUTPUT_PREFIX_V02
+        OUTPUT_PREFIX = OUTPUT_PREFIX_V03
 
 with col_info:
     st.markdown('<div class="sub-header">2. Configurazione</div>', unsafe_allow_html=True)
@@ -243,7 +243,7 @@ with col_info:
     else:
         st.markdown("""
         <div class="info-box">
-        <b>Come funziona V02:</b><br>
+        <b>Come funziona V03:</b><br>
         1. Carica il file Products.csv<br>
         2. Clicca "Avvia Elaborazione"<br>
         3. Il sistema calcola automaticamente:<br>
@@ -264,7 +264,7 @@ if process_mode == "Formato Originale (3 file)":
     # Verifica se tutti i file sono caricati (formato legacy)
     ready_to_process = files_loaded
 else:
-    # Verifica se il file è caricato (formato V02)
+    # Verifica se il file è caricato (formato V03)
     ready_to_process = files_loaded
 
 if ready_to_process:
@@ -300,8 +300,10 @@ if ready_to_process:
                     df_bbr = load_dataframe(file_bbr)
                     
                     # Esegui la logica di processing (versione legacy)
-                    result_df, stats, duplicate_report, log_messages = process_inventory(
-                        df_shopify, df_mcws, df_bbr
+                    #result_df, stats, duplicate_report, log_messages = process_inventory(
+                        #df_shopify, df_mcws, df_bbr
+                    f_output, all_stats, duplicate_report, log_messages = process_inventory_v03(
+                        df_shopify, df_mcws, df_bbr, files['markup']
                     )
                     
                     # Formato legacy: mostra statistiche originali
@@ -309,7 +311,7 @@ if ready_to_process:
                     
                 else:
                     # ==========================================
-                    # ELABORAZIONE FORMATO V02 (3 file - Shopify ha 12 colonne)
+                    # ELABORAZIONE FORMATO V03 (3 file - Shopify ha 12 colonne)
                     # ==========================================
                     
                     # Leggi i file caricati
@@ -317,17 +319,17 @@ if ready_to_process:
                     df_mcws = load_dataframe(file_mcws)
                     df_bbr = load_dataframe(file_bbr)
                     
-                    # Esegui la logica di processing (versione V02)
-                    result_df, stats, duplicate_report, log_messages = process_inventory_v02(
+                    # Esegui la logica di processing (versione V03)
+                    result_df, stats, duplicate_report, log_messages = process_inventory_v03(
                         df_shopify, df_mcws, df_bbr
                     )
                     
                     # Normalizza le statistiche per il formato legacy
-                    # V02 stats ha struttura: {'inventory': {'total': x, 'updates_1': y, 'updates_0': z}}
+                    # V03 stats ha struttura: {'inventory': {'total': x, 'updates_1': y, 'updates_0': z}}
                     if 'inventory' in stats:
                         stats = stats['inventory']
                     
-                    # Formato V02: mostra statistiche originali
+                    # Formato V03: mostra statistiche originali
                     show_legacy_stats = True
                 
                 # ==========================================
@@ -389,7 +391,7 @@ if ready_to_process:
                             st.markdown('</div>', unsafe_allow_html=True)
                     
                     else:
-                        # Statistiche formato V02
+                        # Statistiche formato V03
                         m1, m2, m3 = st.columns(3)
                         m1.metric(
                             "Totale Righe",
@@ -441,10 +443,10 @@ if ready_to_process:
                         use_container_width=True
                     )
                     
-                    if process_mode == "Formato V02 (1 file Products.csv)":
+                    if process_mode == "Formato V03 (1 file Products.csv)":
                         st.markdown(f"""
                         <div class="success-box">
-                        <b>💡 Note sul file V02:</b><br>
+                        <b>💡 Note sul file V03:</b><br>
                         • Il file contiene SOLO le righe con variazioni di QTY o COSTO<br>
                         • Le righe con sole variazioni di prezzo sono state filtrate<br>
                         • Importa in Shopify → Products → Import
@@ -502,4 +504,4 @@ else:
 
 # Footer
 st.markdown("---")
-st.caption("🔧 Inventory Sync WebApp v2.0 | Supporta: Formato Originale (3 file) + Formato V02 (Products.csv) | Sviluppato con Streamlit")
+st.caption("🔧 Inventory Sync WebApp v2.0 | Supporta: Formato Originale (3 file) + Formato V03 (Products.csv) | Sviluppato con Streamlit")
