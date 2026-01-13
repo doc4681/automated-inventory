@@ -124,7 +124,7 @@ with col_upload:
 with col_info:
     st.markdown('<div class="sub-header">2. Configurazione</div>', unsafe_allow_html=True)
     
-    # OPZIONE CHANGE LOG
+    # OPZIONE CHANGE LOG (Nuovo Checkbox)
     include_log = st.checkbox(
         "📝 **Includi colonna 'Change Log' nel file output**",
         value=True,
@@ -187,7 +187,7 @@ if files_loaded:
                     with open('Vroomi_Markup.txt', 'r', encoding='utf-8') as f_markup:
                         result_df, stats, duplicate_report, log_messages = process_inventory_v03(
                             df_shopify_loaded, df_mcws_loaded, df_bbr_loaded, f_markup, f_trademarks,
-                            include_change_log=include_log # <--- NUOVO PARAMETRO
+                            include_change_log=include_log # <--- PASSA IL VALORE DEL CHECKBOX
                         )
                     
                     if 'inventory' in stats:
@@ -256,4 +256,4 @@ else:
     st.info("Attesa caricamento file...")
 
 st.markdown("---")
-st.caption("🔧 Inventory Sync WebApp v2.4")
+st.caption("🔧 Inventory Sync WebApp v2.5")
