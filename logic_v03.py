@@ -1,15 +1,13 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi, Prezzi e SALE
-Versione DEFINITIVA (Con gestione SALE e Compare At Price):
+Versione DEFINITIVA (Output Filtrato + Opzione Change Log):
 1. Identifica i prodotti BBR tramite TAGS.
 2. QTA BBR: 1 (se >0) o 0 (se missing).
 3. COSTI: Aggiorna solo se il fornitore ha un costo valido.
-4. GESTIONE PREZZI & SALE:
-   - Se Costo Scende: CompareAt = VecchioPrezzo, Tag += SALE.
-   - Se Costo Sale: CompareAt = Vuoto, Tag -= SALE.
-   - Arrotondamento sempre a .90.
-5. Markup Loader robusto.
-6. Check SKU+Brand per evitare collisioni.
+4. PREZZI & SALE: Gestione automatica tag SALE e Compare At Price.
+5. ARROTONDAMENTO: Sempre a .90.
+6. OUTPUT: Restituisce SOLO le righe modificate.
+7. OPZIONE: Rimuove colonna Change Log su richiesta.
 """
 
 import pandas as pd
@@ -29,7 +27,7 @@ COL_SHOPIFY_SKU = 'Variant SKU'
 COL_SHOPIFY_QTY = 'Variant Inventory Qty'
 COL_SHOPIFY_COST = 'Variant Cost'
 COL_SHOPIFY_PRICE = 'Variant Price'
-COL_SHOPIFY_COMPARE = 'Variant Compare At Price' # Nuova colonna
+COL_SHOPIFY_COMPARE = 'Variant Compare At Price'
 COL_SHOPIFY_TAGS = 'Tags'
 
 # Colonne aggiuntive
@@ -114,23 +112,15 @@ def add_sale_tag(tags_str):
     """Aggiunge ', SALE' ai tag se non esiste."""
     if pd.isna(tags_str): tags_str = ""
     tags_list = [t.strip() for t in str(tags_str).split(',') if t.strip()]
-    
-    # Controlla se SALE esiste già (case insensitive)
-    has_sale = any(t.upper() == 'SALE' for t in tags_list)
-    
-    if not has_sale:
+    if not any(t.upper() == 'SALE' for t in tags_list):
         tags_list.append("SALE")
-        
     return ", ".join(tags_list)
 
 def remove_sale_tag(tags_str):
     """Rimuove 'SALE' dai tag se esiste."""
     if pd.isna(tags_str): return ""
     tags_list = [t.strip() for t in str(tags_str).split(',') if t.strip()]
-    
-    # Filtra via SALE
     new_list = [t for t in tags_list if t.upper() != 'SALE']
-    
     return ", ".join(new_list)
 
 def check_brand_compatibility(shopify_tags, supplier_brand):
@@ -169,7 +159,6 @@ def load_markup_rules(markup_file_content):
             content = content.decode('utf-8', errors='ignore')
             
         lines = content.splitlines()
-        
         header_idx = -1
         for i, line in enumerate(lines[:10]):
             if 'TRADEMARK' in line.upper() or 'BRAND' in line.upper():
@@ -228,7 +217,7 @@ def get_markup_for_brand(tags, brand_name, markup_dict):
 # ==========================================
 # LOGICA PRINCIPALE (V03)
 # ==========================================
-def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file):
+def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file, include_change_log=True):
     
     # --- 1. PREPARAZIONE DATI ---
     markup_rules = load_markup_rules(markup_file)
@@ -277,7 +266,6 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
     if COL_CHANGE_LOG not in output_df.columns:
         output_df[COL_CHANGE_LOG] = ''
     
-    # Assicurati che le colonne target esistano
     if COL_COMPARE not in output_df.columns:
         output_df[COL_COMPARE] = ''
 
@@ -292,9 +280,8 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             current_qty = clean_qty(row.get(COL_QTY, 0))
             current_cost = clean_currency(row.get(COL_COST, 0))
             current_price = clean_currency(row.get(COL_PRICE, 0))
-            current_compare = row.get(COL_COMPARE, '') # Può essere stringa o numero
+            current_compare = row.get(COL_COMPARE, '')
             
-            # Variabili di lavoro (Default = invariato)
             new_qty = current_qty
             new_cost = current_cost
             new_price = current_price
@@ -364,35 +351,25 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             
             if cost_has_changed and found_supplier:
                 
-                # 1. Calcola Nuovo Prezzo Target
+                # Calcola Nuovo Prezzo
                 markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
                 raw_price = new_cost * markup
                 calculated_price = round_price_to_90(raw_price)
                 
-                # LOGICA SALE
-                
                 # CASO 1: Costo SCENDE -> Attiva SALE
                 if new_cost < current_cost:
-                    # Copia Variant Price Originale in Compare At
                     new_compare = current_price
-                    # Inserisci Nuovo Prezzo Scontato
                     new_price = calculated_price
-                    # Aggiungi Tag SALE
                     new_tags = add_sale_tag(tags)
-                    
-                    changes.append(f"SALE ACTIVATED: Price {current_price}->{new_price}, CompareAt set to {current_price}")
+                    changes.append(f"SALE: Price {current_price}->{new_price}, Compare {current_price}")
                     stats['updated_price'] += 1
 
                 # CASO 2: Costo SALE -> Rimuovi SALE
                 elif new_cost > current_cost:
-                    # Cancella Compare At
-                    new_compare = "" 
-                    # Inserisci Nuovo Prezzo Maggiorato
+                    new_compare = ""
                     new_price = calculated_price
-                    # Rimuovi Tag SALE
                     new_tags = remove_sale_tag(tags)
-                    
-                    changes.append(f"PRICE UP (NO SALE): Price {current_price}->{new_price}, CompareAt cleared")
+                    changes.append(f"PRICE UP: Price {current_price}->{new_price}")
                     stats['updated_price'] += 1
 
             # --- SALVATAGGIO ---
@@ -418,4 +395,11 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
     stats['qty_changes'] = stats['updated_qty']
     stats['cost_changes'] = stats['updated_cost']
 
-    return output_df, stats, [], logs
+    # === FILTRO FINALE ===
+    df_changes_only = output_df[output_df[COL_CHANGE_LOG] != '']
+    
+    # Rimuovi colonna Change Log se non richiesta
+    if not include_change_log:
+        df_changes_only = df_changes_only.drop(columns=[COL_CHANGE_LOG], errors='ignore')
+
+    return df_changes_only, stats, [], logs
