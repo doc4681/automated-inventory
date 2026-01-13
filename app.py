@@ -124,6 +124,15 @@ with col_upload:
 with col_info:
     st.markdown('<div class="sub-header">2. Configurazione</div>', unsafe_allow_html=True)
     
+    # OPZIONE CHANGE LOG
+    include_log = st.checkbox(
+        "📝 **Includi colonna 'Change Log' nel file output**",
+        value=True,
+        help="Se selezionato, il file CSV finale includerà la colonna con i dettagli delle modifiche. Deseleziona per avere un file pulito per Shopify."
+    )
+
+    st.write("---")
+    
     # Mostra lista trademarks caricata dal file
     try:
         with open('Valid_Trademarks.txt', 'r', encoding='utf-8') as f:
@@ -174,10 +183,11 @@ if files_loaded:
                     show_legacy_stats = True
                     
                 else:
-                    # LOGICA V03 (Con filtro file esterno + Markup)
+                    # LOGICA V03 (Passiamo il parametro include_change_log)
                     with open('Vroomi_Markup.txt', 'r', encoding='utf-8') as f_markup:
                         result_df, stats, duplicate_report, log_messages = process_inventory_v03(
-                            df_shopify_loaded, df_mcws_loaded, df_bbr_loaded, f_markup, f_trademarks
+                            df_shopify_loaded, df_mcws_loaded, df_bbr_loaded, f_markup, f_trademarks,
+                            include_change_log=include_log # <--- NUOVO PARAMETRO
                         )
                     
                     if 'inventory' in stats:
@@ -246,4 +256,4 @@ else:
     st.info("Attesa caricamento file...")
 
 st.markdown("---")
-st.caption("🔧 Inventory Sync WebApp v2.2")
+st.caption("🔧 Inventory Sync WebApp v2.4")
