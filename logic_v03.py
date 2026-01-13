@@ -1,16 +1,7 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi e Prezzi
 Versione aggiornata per supportare Products_all.csv (12 colonne)
-
-Funzionalità:
-1. Mantiene la struttura esatta del file Shopify di input (12 colonne).
-2. Aggiornamento COSTI:
-   - BBR: Confronta 'Variant Cost' con 'CostoBBRModels' dal file fornitore. Aggiorna se diverso.
-   - MCWS: Confronta 'Variant Cost' con 'Net Price' dal file fornitore. Aggiorna se diverso.
-3. Aggiornamento PREZZI:
-   - Ricalcola 'Variant Price' basandosi sul NUOVO costo e sul Markup (da Vroomi_Markup.txt).
-4. Aggiornamento QUANTITÀ:
-   - Sincronizza lo stock come nelle versioni precedenti.
+Corretta per compatibilità import con app.py
 """
 
 import pandas as pd
@@ -18,26 +9,48 @@ import numpy as np
 import re
 from io import StringIO
 
-# ==========================================\n# CONFIGURAZIONE COSTANTI
-# ==========================================\n
-COL_SKU = 'Variant SKU'
-COL_QTY = 'Variant Inventory Qty'
-COL_COST = 'Variant Cost'
-COL_PRICE = 'Variant Price'
-COL_TAGS = 'Tags'
+# ==========================================
+# CONFIGURAZIONE COSTANTI (Compatibili con app.py)
+# ==========================================
 
-# Colonne Fornitori (Mapping interno)
-COL_BBR_SKU = 'DescrizioneVariante'
-COL_BBR_COST = 'CostoBBRModels'
-COL_BBR_QTY = 'QtaResidua'
+# Prefisso file output
+OUTPUT_PREFIX = "INVENTORY_UPDATE_V03"
 
+# Colonne Shopify (Nomi esatti richiesti dall'import di app.py)
+COL_SHOPIFY_SKU = 'Variant SKU'
+COL_SHOPIFY_QTY = 'Variant Inventory Qty'
+COL_SHOPIFY_COST = 'Variant Cost'
+COL_SHOPIFY_PRICE = 'Variant Price'
+COL_SHOPIFY_TAGS = 'Tags'
+
+# Altre colonne richieste dall'import di app.py
+COL_COSTO_BBR = 'CostoBBRModels'
+COL_NET_PRICE = 'Net Price'
+COL_BRAND = 'Trademark'
 COL_MCWS_CODE = 'Code'
-COL_MCWS_NET = 'Net Price'
-COL_MCWS_BRAND = 'Trademark'
+COL_MCWS_TRADEMARK = 'Trademark'
+COL_BBR_QTY = 'QtaResidua'
+COL_CHANGE_LOG = 'Change Log'
+
+# Mapping interno (Alias per comodità nello script)
+COL_SKU = COL_SHOPIFY_SKU
+COL_QTY = COL_SHOPIFY_QTY
+COL_COST = COL_SHOPIFY_COST
+COL_PRICE = COL_SHOPIFY_PRICE
+COL_TAGS = COL_SHOPIFY_TAGS
+
+# Colonne Fornitori (Mapping interno specifico)
+COL_BBR_SKU = 'DescrizioneVariante'
+COL_BBR_COST = COL_COSTO_BBR
+# COL_BBR_QTY è già definito sopra come 'QtaResidua'
+
+COL_MCWS_NET = COL_NET_PRICE
+COL_MCWS_BRAND = COL_BRAND
 COL_MCWS_EAN = 'EAN'
 
-# ==========================================\n# FUNZIONI DI UTILITÀ
-# ==========================================\n
+# ==========================================
+# FUNZIONI DI UTILITÀ
+# ==========================================
 def clean_currency(value):
     """Converte stringhe valuta (es. '19,90') in float."""
     if pd.isna(value) or value == '':
@@ -109,8 +122,9 @@ def get_markup_for_brand(tags, brand_name, markup_dict):
     # 3. Default generico se non trovato
     return 1.50
 
-# ==========================================\n# LOGICA PRINCIPALE (V03)
-# ==========================================\n
+# ==========================================
+# LOGICA PRINCIPALE (V03)
+# ==========================================
 def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
     """
     Elabora l'inventario confrontando Shopify con BBR e MCWS.
@@ -137,7 +151,6 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
                 }
 
     # MCWS Lookup: Code -> {Cost, Qty, Brand}
-    # Creiamo due indici: uno per Code esatto, uno per EAN se serve
     mcws_lookup = {}
     if not df_mcws.empty:
         df_mcws.columns = [c.strip().replace('"', '') for c in df_mcws.columns]
@@ -146,27 +159,29 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
             if code:
                 mcws_lookup[code] = {
                     'cost': clean_currency(row.get(COL_MCWS_NET, 0)),
-                    'qty': 999, # MCWS stocklist implica disponibilità, oppure logica specifica
+                    'qty': 999, # MCWS stocklist implica disponibilità
                     'brand': str(row.get(COL_MCWS_BRAND, ''))
                 }
     
     # Statistiche e Log
-    stats = {'processed': 0, 'updated_qty': 0, 'updated_cost': 0, 'updated_price': 0, 'errors': 0}
+    stats = {'processed': 0, 'updated_qty': 0, 'updated_cost': 0, 'updated_price': 0, 'errors': 0, 
+             'inventory': {'total': 0, 'updates_1': 0, 'updates_0': 0}} # Struttura legacy per compatibilità report
     logs = []
     
     # --- 2. ELABORAZIONE SHOPIFY ---
     
     # Creiamo una copia per non modificare l'originale durante l'iterazione
-    # Manteniamo ESATTAMENTE le colonne originali
     output_df = df_shopify.copy()
     
-    # Aggiungi colonna Change Log se non esiste (utile per debug, poi si può rimuovere se necessario)
-    if 'Change Log' not in output_df.columns:
-        output_df['Change Log'] = ''
+    # Aggiungi colonna Change Log se non esiste
+    if COL_CHANGE_LOG not in output_df.columns:
+        output_df[COL_CHANGE_LOG] = ''
         
     for index, row in output_df.iterrows():
         try:
             stats['processed'] += 1
+            stats['inventory']['total'] += 1
+            
             sku = str(row.get(COL_SKU, '')).strip()
             tags = str(row.get(COL_TAGS, ''))
             
@@ -186,13 +201,11 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
             # --- LOGICA IDENTIFICAZIONE FORNITORE E DATI ---
             
             # 1. CHECK BBR
-            # BBR si identifica spesso se lo SKU è nel file BBR
             if sku in bbr_lookup:
                 found_supplier = True
                 supplier_data = bbr_lookup[sku]
                 
-                # A) Aggiorna COSTO (Logica Richiesta)
-                # "compara il valore della colonna CostoBBRModels con Variant Cost"
+                # A) Aggiorna COSTO
                 supplier_cost = supplier_data['cost']
                 if supplier_cost > 0 and abs(supplier_cost - current_cost) > 0.01:
                     new_cost = supplier_cost
@@ -201,8 +214,6 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
                 
                 # B) Aggiorna QTA
                 supplier_qty = supplier_data['qty']
-                # Logica BBR: se < 3 diventa 0 (esempio da versioni precedenti) o diretta
-                # Usiamo diretta per ora salvo logica specifica
                 if supplier_qty != current_qty:
                     new_qty = supplier_qty
                     changes.append(f"QTY(BBR): {current_qty}->{new_qty}")
@@ -211,47 +222,37 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
                 supplier_brand = "BBR"
 
             # 2. CHECK MCWS
-            # Se non trovato in BBR, cerca in MCWS
             elif not found_supplier:
-                # MCWS spesso richiede mapping SKU -> Code.
-                # Assumiamo qui che SKU Shopify corrisponda a Code MCWS o debba essere pulito
-                # Esempio: "W18030009" (Shopify) -> "W18030009" (MCWS)
-                # In logic_v02 c'era logica complessa, qui usiamo match diretto per la richiesta "Dinamica"
-                
                 match_obj = None
                 if sku in mcws_lookup:
                     match_obj = mcws_lookup[sku]
                 
                 if match_obj:
                     found_supplier = True
-                    # A) Aggiorna COSTO (Logica Richiesta)
-                    # "compara Net Price con Variant Cost"
+                    # A) Aggiorna COSTO
                     supplier_cost = match_obj['cost']
                     if supplier_cost > 0 and abs(supplier_cost - current_cost) > 0.01:
                         new_cost = supplier_cost
                         changes.append(f"COST(MCWS): {current_cost:.2f}->{new_cost:.2f}")
                         stats['updated_cost'] += 1
                     
-                    # B) Aggiorna QTA (MCWS stocklist contiene solo disponibili)
+                    # B) Aggiorna QTA (MCWS stocklist = disponibile)
                     if current_qty == 0:
-                        new_qty = 1 # Riattiva se presente nel file
+                        new_qty = 1 
                         changes.append(f"QTY(MCWS): 0->1")
                         stats['updated_qty'] += 1
                     
                     supplier_brand = match_obj['brand']
 
             # --- 3. AGGIORNAMENTO PREZZI (MARKUP) ---
-            # Se il costo è cambiato, o se vogliamo forzare il ricalcolo
             if abs(new_cost - current_cost) > 0.01:
-                # Determina il Markup
                 if found_supplier:
                     markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
                 else:
-                    markup = 1.5 # Default safety
+                    markup = 1.5 
                 
                 calculated_price = round(new_cost * markup, 2)
                 
-                # Applica solo se diverso
                 if abs(calculated_price - current_price) > 0.01:
                     new_price = calculated_price
                     changes.append(f"PRICE: {current_price:.2f}->{new_price:.2f}")
@@ -262,12 +263,22 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
             output_df.at[index, COL_COST] = new_cost
             output_df.at[index, COL_PRICE] = new_price
             
+            # Statistiche aggiuntive per compatibilità report
+            if new_qty > 0 and current_qty == 0:
+                stats['inventory']['updates_1'] += 1
+            elif new_qty == 0 and current_qty > 0:
+                stats['inventory']['updates_0'] += 1
+            
             if changes:
-                output_df.at[index, 'Change Log'] = " | ".join(changes)
-                # logs.append(f"{sku}: {', '.join(changes)}")
+                output_df.at[index, COL_CHANGE_LOG] = " | ".join(changes)
 
         except Exception as e:
             stats['errors'] += 1
             logs.append(f"Errore riga {index} (SKU {row.get(COL_SKU, 'NA')}): {str(e)}")
+
+    # Statistiche finali per il report nel frontend
+    stats['total_rows'] = stats['processed']
+    stats['qty_changes'] = stats['updated_qty']
+    stats['cost_changes'] = stats['updated_cost']
 
     return output_df, stats, [], logs
