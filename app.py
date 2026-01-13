@@ -322,6 +322,11 @@ if ready_to_process:
                         df_shopify, df_mcws, df_bbr
                     )
                     
+                    # Normalizza le statistiche per il formato legacy
+                    # V02 stats ha struttura: {'inventory': {'total': x, 'updates_1': y, 'updates_0': z}}
+                    if 'inventory' in stats:
+                        stats = stats['inventory']
+                    
                     # Formato V02: mostra statistiche originali
                     show_legacy_stats = True
                 
