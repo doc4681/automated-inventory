@@ -1,17 +1,19 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi e Prezzi
-Versione DEFINITIVA (Fix Costi e Prezzi):
+Versione DEFINITIVA (Con Arrotondamento .90):
 1. Identifica i prodotti BBR tramite TAGS.
 2. QTA BBR: 1 (se >0) o 0 (se missing).
 3. COSTI: Aggiorna solo se il fornitore ha un costo valido.
-4. PREZZI: Se il costo cambia -> Prezzo = Nuovo Costo * Markup Brand.
-5. Markup Loader robusto per file TXT formattati male.
+4. PREZZI: Prezzo = Costo * Markup -> Arrotondato a .90.
+5. Markup Loader robusto.
+6. Check SKU+Brand per evitare collisioni.
 """
 
 import pandas as pd
 import numpy as np
 import re
 from io import StringIO
+import math
 
 # ==========================================
 # CONFIGURAZIONE COSTANTI
@@ -67,26 +69,20 @@ def normalize_string(s):
 def clean_currency(value):
     """
     Pulisce e converte la valuta in float in modo sicuro.
-    Gestisce formati 1.200,00 e 1,200.00
     """
     if pd.isna(value) or value == '':
         return 0.0
     if isinstance(value, (int, float)):
         return float(value)
         
-    # Rimuovi valute e spazi
     val_str = str(value).replace('€', '').replace('$', '').strip()
     
-    # Logica euristica per separatori
     if ',' in val_str and '.' in val_str:
-        # Assumiamo formato europeo se c'è la virgola alla fine (es. 1.000,50)
         if val_str.find(',') > val_str.find('.'):
             val_str = val_str.replace('.', '').replace(',', '.')
         else:
-            # Formato USA (1,000.50)
             val_str = val_str.replace(',', '')
     elif ',' in val_str:
-        # Solo virgola -> è decimale (es. 50,00 -> 50.00)
         val_str = val_str.replace(',', '.')
         
     try:
@@ -102,6 +98,26 @@ def clean_qty(value):
         return int(num)
     except:
         return 0
+
+def round_price_to_90(price):
+    """
+    Arrotonda il prezzo sempre per eccesso a .90
+    Es: 23.20 -> 23.90
+    Es: 23.65 -> 23.90
+    Es: 23.95 -> 24.90
+    """
+    if price <= 0:
+        return 0.0
+    
+    integer_part = int(price)
+    decimal_part = price - integer_part
+    
+    # Se i decimali sono già > 0.90 (es. 0.95), saltiamo all'intero successivo + .90
+    # Usiamo 0.90001 per evitare problemi di virgola mobile con 0.90 esatto
+    if decimal_part > 0.90001:
+        return float(integer_part + 1.90)
+    else:
+        return float(integer_part + 0.90)
 
 def check_brand_compatibility(shopify_tags, supplier_brand):
     """Verifica coerenza Brand normalizzata."""
@@ -125,7 +141,7 @@ def check_brand_compatibility(shopify_tags, supplier_brand):
 
 def load_markup_rules(markup_file_content):
     """
-    Carica le regole di markup gestendo separatori misti.
+    Carica le regole di markup in modo ROBUSTO.
     """
     markup_dict = {}
     default_markup = 1.50
@@ -136,15 +152,12 @@ def load_markup_rules(markup_file_content):
             return markup_dict
 
         markup_file_content.seek(0)
-        # Leggi tutto il contenuto come testo
         content = markup_file_content.read()
-        # Se bytes, decodifica
         if isinstance(content, bytes):
             content = content.decode('utf-8', errors='ignore')
             
         lines = content.splitlines()
         
-        # Cerca header
         header_idx = -1
         for i, line in enumerate(lines[:10]):
             if 'TRADEMARK' in line.upper() or 'BRAND' in line.upper():
@@ -152,17 +165,12 @@ def load_markup_rules(markup_file_content):
                 break
         
         if header_idx >= 0:
-            # Processa righe successive
             for line in lines[header_idx+1:]:
                 if not line.strip(): continue
-                
-                # Sostituisci tab con spazi e splitta
                 parts = line.replace('\t', ' ').split()
                 if len(parts) >= 2:
-                    # L'ultimo elemento è il markup, tutto quello prima è il brand
                     mk_str = parts[-1].replace(',', '.').replace('%', '')
                     brand_str = " ".join(parts[:-1])
-                    
                     try:
                         val = float(mk_str)
                         markup_dict[normalize_string(brand_str)] = val
@@ -271,7 +279,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             current_cost = clean_currency(row.get(COL_COST, 0))
             current_price = clean_currency(row.get(COL_PRICE, 0))
             
-            # Variabili di lavoro (iniziano uguali agli attuali)
+            # Variabili di lavoro
             new_qty = current_qty
             new_cost = current_cost
             new_price = current_price
@@ -299,7 +307,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 target_qty = 1 if supplier_data['qty'] > 0 else 0
                 if target_qty != current_qty:
                     new_qty = target_qty
-                    changes.append(f"QTY(BBR): {current_qty}->{new_qty}")
+                    changes.append(f"QTY(BBR-Force): {current_qty}->{new_qty}")
                     stats['updated_qty'] += 1
 
             # B. CHECK BBR ORFANO (Tag BBR ma non in file)
@@ -309,7 +317,6 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                     new_qty = 0
                     changes.append(f"QTY(BBR-Missing): {current_qty}->0")
                     stats['updated_qty'] += 1
-                # Stop, non guardare MCWS
 
             # C. CHECK MCWS
             else:
@@ -336,19 +343,21 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                             stats['updated_qty'] += 1
 
             # --- FASE 2: AGGIORNAMENTO PREZZI ---
-            # Regola: Se Variant Cost è cambiato -> Calcola Nuovo Prezzo
+            # Regola: Se Variant Cost è cambiato -> Calcola Nuovo Prezzo con Arrotondamento .90
             
             cost_has_changed = abs(new_cost - current_cost) > 0.01
             
-            if cost_has_changed:
+            if cost_has_changed and found_supplier:
                 # 1. Trova Markup
                 markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
                 
-                # 2. Calcola Prezzo
-                # variant_price = new_cost * markup
-                calculated_price = round(new_cost * markup, 2)
+                # 2. Calcola Prezzo Grezzo
+                raw_price = new_cost * markup
                 
-                # 3. Aggiorna
+                # 3. Arrotonda a .90
+                calculated_price = round_price_to_90(raw_price)
+                
+                # 4. Aggiorna
                 if abs(calculated_price - current_price) > 0.01:
                     new_price = calculated_price
                     changes.append(f"PRICE: {current_price:.2f}->{new_price:.2f} (Mk {markup})")
