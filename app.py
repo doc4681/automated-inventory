@@ -11,7 +11,7 @@ from logic import (
 # ==========================================
 
 st.set_page_config(
-    page_title="Inventory Sync Manager",
+    page_title="Automated Inventory & Cost Sync Manager",
     page_icon="icon.png",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -106,7 +106,7 @@ def load_dataframe(uploaded_file):
 # ==========================================
 
 # Header principale
-st.markdown('<div class="main-header">📦 Inventory Sync WebApp</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📦 Automated Inventory & Cost Sync WebApp</div>', unsafe_allow_html=True)
 st.markdown("Carica i listini inventario per generare il file di aggiornamento per Shopify")
 st.markdown("---")
 
@@ -311,4 +311,4 @@ else:
 
 # Footer
 st.markdown("---")
-st.caption("🔧 Inventory Sync WebApp v1.0 | Sviluppato con Streamlit")
+st.caption("🔧 Automated Inventory & Cost Sync WebApp v1.0 | Sviluppato con Streamlit")
