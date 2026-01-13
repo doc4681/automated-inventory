@@ -1,7 +1,7 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi e Prezzi
 Versione aggiornata per supportare Products_all.csv (12 colonne)
-Corretta per compatibilità import con app.py
+Corretta per gestire errori NaN su quantità e importazioni.
 """
 
 import pandas as pd
@@ -71,16 +71,31 @@ def clean_currency(value):
     except ValueError:
         return 0.0
 
+def clean_qty(value):
+    """
+    Converte in intero in modo sicuro gestendo NaN e stringhe vuote.
+    Risolve l'errore: ValueError: cannot convert float NaN to integer
+    """
+    try:
+        # Tenta la conversione a numerico, forzando NaN se fallisce
+        num = pd.to_numeric(value, errors='coerce')
+        # Se è NaN (non un numero valido), ritorna 0
+        if pd.isna(num):
+            return 0
+        # Altrimenti ritorna l'intero
+        return int(num)
+    except:
+        return 0
+
 def load_markup_rules(markup_file_content):
     """Carica le regole di markup dal file TXT."""
     markup_dict = {}
     try:
-        # Se è un file caricato (BytesIO/StringIO) o una stringa
+        # Se è un file aperto (file-like object)
         if hasattr(markup_file_content, 'read'):
             markup_file_content.seek(0)
             df = pd.read_csv(markup_file_content, sep='\t')
         else:
-            # Se è già un dataframe o altro
             return {}
 
         # Pulisci e normalizza
@@ -112,7 +127,6 @@ def get_markup_for_brand(tags, brand_name, markup_dict):
     if pd.notna(tags):
         tags_list = [t.strip().upper() for t in str(tags).split(',')]
         for tag in tags_list:
-            # Rimuovi prefissi comuni se esistono (es. "brand_ferrari" -> "FERRARI")
             clean_tag = tag.replace('BRAND_', '')
             if clean_tag in markup_dict:
                 return markup_dict[clean_tag]
@@ -137,20 +151,24 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
     markup_rules = load_markup_rules(markup_file)
     
     # Dizionari per accesso rapido ai dati fornitori
-    # BBR Lookup: SKU -> {Cost, Qty}
+    
+    # BBR Lookup
     bbr_lookup = {}
     if not df_bbr.empty:
-        # Assicuriamoci che i nomi colonne siano corretti (rimuovi spazi extra)
         df_bbr.columns = [c.strip() for c in df_bbr.columns]
         for _, row in df_bbr.iterrows():
             sku = str(row.get(COL_BBR_SKU, '')).strip()
             if sku:
+                # Usa clean_qty per evitare errori NaN
+                qty_val = clean_qty(row.get(COL_BBR_QTY, 0))
+                cost_val = clean_currency(row.get(COL_BBR_COST, 0))
+                
                 bbr_lookup[sku] = {
-                    'cost': clean_currency(row.get(COL_BBR_COST, 0)),
-                    'qty': int(pd.to_numeric(row.get(COL_BBR_QTY, 0), errors='coerce') or 0)
+                    'cost': cost_val,
+                    'qty': qty_val
                 }
 
-    # MCWS Lookup: Code -> {Cost, Qty, Brand}
+    # MCWS Lookup
     mcws_lookup = {}
     if not df_mcws.empty:
         df_mcws.columns = [c.strip().replace('"', '') for c in df_mcws.columns]
@@ -164,13 +182,14 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
                 }
     
     # Statistiche e Log
-    stats = {'processed': 0, 'updated_qty': 0, 'updated_cost': 0, 'updated_price': 0, 'errors': 0, 
-             'inventory': {'total': 0, 'updates_1': 0, 'updates_0': 0}} # Struttura legacy per compatibilità report
+    stats = {
+        'processed': 0, 'updated_qty': 0, 'updated_cost': 0, 'updated_price': 0, 'errors': 0, 
+        'inventory': {'total': 0, 'updates_1': 0, 'updates_0': 0}
+    }
     logs = []
     
     # --- 2. ELABORAZIONE SHOPIFY ---
     
-    # Creiamo una copia per non modificare l'originale durante l'iterazione
     output_df = df_shopify.copy()
     
     # Aggiungi colonna Change Log se non esiste
@@ -185,8 +204,8 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
             sku = str(row.get(COL_SKU, '')).strip()
             tags = str(row.get(COL_TAGS, ''))
             
-            # Valori attuali
-            current_qty = int(pd.to_numeric(row.get(COL_QTY, 0), errors='coerce') or 0)
+            # Valori attuali (Usa clean_qty anche qui per sicurezza)
+            current_qty = clean_qty(row.get(COL_QTY, 0))
             current_cost = clean_currency(row.get(COL_COST, 0))
             current_price = clean_currency(row.get(COL_PRICE, 0))
             
@@ -236,7 +255,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
                         changes.append(f"COST(MCWS): {current_cost:.2f}->{new_cost:.2f}")
                         stats['updated_cost'] += 1
                     
-                    # B) Aggiorna QTA (MCWS stocklist = disponibile)
+                    # B) Aggiorna QTA
                     if current_qty == 0:
                         new_qty = 1 
                         changes.append(f"QTY(MCWS): 0->1")
@@ -263,7 +282,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
             output_df.at[index, COL_COST] = new_cost
             output_df.at[index, COL_PRICE] = new_price
             
-            # Statistiche aggiuntive per compatibilità report
+            # Statistiche Legacy
             if new_qty > 0 and current_qty == 0:
                 stats['inventory']['updates_1'] += 1
             elif new_qty == 0 and current_qty > 0:
@@ -276,7 +295,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file):
             stats['errors'] += 1
             logs.append(f"Errore riga {index} (SKU {row.get(COL_SKU, 'NA')}): {str(e)}")
 
-    # Statistiche finali per il report nel frontend
+    # Statistiche finali
     stats['total_rows'] = stats['processed']
     stats['qty_changes'] = stats['updated_qty']
     stats['cost_changes'] = stats['updated_cost']
