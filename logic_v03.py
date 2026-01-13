@@ -1,9 +1,9 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi e Prezzi
 Versione aggiornata:
-1. Supporta Products_all.csv (12 colonne)
-2. Filtra MCWS tramite Valid_Trademarks.txt
-3. LOGICA ESCLUSIVA BBR: Se il Trademark è BBR-MODELS, non confronta mai con MCWS.
+1. Identifica i prodotti BBR tramite i TAGS (dato che non c'è colonna Trademark).
+2. Se un prodotto ha tag 'BBR' ma non è nel file BBR, viene IGNORATO (non cerca in MCWS).
+3. Gestisce Products_all.csv a 12 colonne.
 """
 
 import pandas as pd
@@ -17,31 +17,37 @@ from io import StringIO
 
 OUTPUT_PREFIX = "INVENTORY_UPDATE_V03"
 
+# Nomi colonne file Shopify (Products_all.csv)
 COL_SHOPIFY_SKU = 'Variant SKU'
 COL_SHOPIFY_QTY = 'Variant Inventory Qty'
 COL_SHOPIFY_COST = 'Variant Cost'
 COL_SHOPIFY_PRICE = 'Variant Price'
 COL_SHOPIFY_TAGS = 'Tags'
 
+# Colonne aggiuntive (presenti nel file a 12 colonne o da gestire)
 COL_COSTO_BBR = 'CostoBBRModels'
 COL_NET_PRICE = 'Net Price'
-COL_BRAND = 'Trademark'
-COL_MCWS_CODE = 'Code'
-COL_MCWS_TRADEMARK = 'Trademark'
-COL_BBR_QTY = 'QtaResidua'
 COL_CHANGE_LOG = 'Change Log'
 
+# Mapping interno
 COL_SKU = COL_SHOPIFY_SKU
 COL_QTY = COL_SHOPIFY_QTY
 COL_COST = COL_SHOPIFY_COST
 COL_PRICE = COL_SHOPIFY_PRICE
 COL_TAGS = COL_SHOPIFY_TAGS
 
+# Colonne Fornitori
 COL_BBR_SKU = 'DescrizioneVariante'
 COL_BBR_COST = COL_COSTO_BBR
+COL_BBR_QTY = 'QtaResidua'
 
 COL_MCWS_NET = COL_NET_PRICE
-COL_MCWS_BRAND = COL_BRAND
+COL_MCWS_CODE = 'Code'
+COL_MCWS_TRADEMARK = 'Trademark'
+COL_MCWS_BRAND = 'Trademark'
+
+# Mantengo definizioni per compatibilità import app.py anche se non usate internamente
+COL_BRAND = 'Trademark' 
 COL_MCWS_EAN = 'EAN'
 
 # ==========================================
@@ -112,8 +118,10 @@ def load_trademarks(file_obj):
     return trademarks
 
 def get_markup_for_brand(tags, brand_name, markup_dict):
+    # Priorità: Brand del fornitore -> Tags Shopify
     if brand_name and str(brand_name).upper() in markup_dict:
         return markup_dict[str(brand_name).upper()]
+    
     if pd.notna(tags):
         tags_list = [t.strip().upper() for t in str(tags).split(',')]
         for tag in tags_list:
@@ -129,7 +137,7 @@ def get_markup_for_brand(tags, brand_name, markup_dict):
 # ==========================================
 def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file):
     """
-    Elabora l'inventario filtrando per marchi validi e gestendo priorità BBR.
+    Elabora l'inventario filtrando per marchi validi e gestendo priorità BBR tramite TAGS.
     """
     
     # --- 1. PREPARAZIONE DATI ---
@@ -190,10 +198,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             stats['inventory']['total'] += 1
             
             sku = str(row.get(COL_SKU, '')).strip()
-            tags = str(row.get(COL_TAGS, ''))
-            
-            # Recupera il Trademark dal file Shopify
-            current_trademark = str(row.get(COL_BRAND, '')).strip().upper()
+            tags = str(row.get(COL_TAGS, '')).upper() # Tags in maiuscolo per controlli
             
             current_qty = clean_qty(row.get(COL_QTY, 0))
             current_cost = clean_currency(row.get(COL_COST, 0))
@@ -210,6 +215,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             # --- LOGICA IDENTIFICAZIONE FORNITORE ---
             
             # 1. CONTROLLO PRIORITARIO BBR (File BBR_export)
+            # Cerchiamo l'SKU nel file fornito da BBR.
             if sku in bbr_lookup:
                 found_supplier = True
                 supplier_data = bbr_lookup[sku]
@@ -233,14 +239,19 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             # 2. CONTROLLO MCWS (Solo se NON trovato in BBR)
             elif not found_supplier:
                 
-                # >>> NUOVA REGOLA DI ESCLUSIONE BBR <<<
-                # Se il prodotto Shopify ha trademark BBR-MODELS, NON controllare in MCWS.
-                # Consideriamo "BBR" generico per sicurezza (BBR, BBR-MODELS, BBR MODELS)
-                is_bbr_trademark = 'BBR' in current_trademark
+                # >>> ESCLUSIONE BLINDATA TRAMITE TAGS <<<
+                # Controlliamo se nei TAGS c'è la parola "BBR".
+                # Se c'è, significa che è un prodotto BBR. Dato che non l'abbiamo trovato
+                # al punto 1 (listino BBR), lo IGNORIAMO per evitare che MCWS lo aggiorni.
                 
-                if not is_bbr_trademark:
-                    # Procedi con confronto MCWS solo se NON è BBR
-                    
+                is_bbr_tag = 'BBR' in tags
+                
+                if is_bbr_tag:
+                    # È un BBR, ma non è nel file BBR. STOP.
+                    pass
+                
+                else:
+                    # NON è un BBR (nessun tag BBR), procediamo con MCWS
                     match_obj = None
                     if sku in mcws_lookup:
                         match_obj = mcws_lookup[sku]
@@ -264,8 +275,12 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             # --- 3. AGGIORNAMENTO PREZZI ---
             # Solo se il costo è cambiato
             if abs(new_cost - current_cost) > 0.01:
+                # Se abbiamo trovato il fornitore, usiamo il suo brand per il markup.
+                # Altrimenti se è un BBR orfano (trovato con tag ma senza listino),
+                # il costo non cambia e quindi non entriamo qui.
                 if found_supplier:
-                    markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
+                    # Passiamo 'tags' originali per cercare markup se brand fornitore manca
+                    markup = get_markup_for_brand(row.get(COL_TAGS, ''), supplier_brand, markup_rules)
                 else:
                     markup = 1.5 
                 
