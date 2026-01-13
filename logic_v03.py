@@ -1,13 +1,12 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi e Prezzi
-Versione aggiornata e DEFINITIVA:
+Versione aggiornata:
 1. Identifica i prodotti BBR tramite TAGS.
-2. GESTIONE QTA BBR: 
+2. GESTIONE QTA BBR MODIFICATA:
    - Se presente in BBR (>0): QTY diventa sempre 1.
    - Se tag BBR ma NON presente in BBR: QTY diventa 0.
 3. Double Check SKU + BRAND per MCWS.
-4. Normalizzazione stringhe (gestisce SUN-STAR vs SUN STAR).
-5. ***CARICAMENTO MARKUP ROBUSTO***: Legge Vroomi_Markup.txt anche se formattato male.
+4. Normalizzazione stringhe.
 """
 
 import pandas as pd
@@ -50,7 +49,6 @@ COL_MCWS_CODE = 'Code'
 COL_MCWS_TRADEMARK = 'Trademark'
 COL_MCWS_BRAND = 'Trademark'
 
-# Costanti Export app.py
 COL_BRAND = 'Trademark' 
 COL_MCWS_EAN = 'EAN'
 
@@ -59,10 +57,7 @@ COL_MCWS_EAN = 'EAN'
 # ==========================================
 
 def normalize_string(s):
-    """
-    Rimuove spazi, trattini e caratteri speciali.
-    Es. "SUN-STAR" -> "SUNSTAR", "Tecno Model" -> "TECNOMODEL"
-    """
+    """Rimuove spazi, trattini e caratteri speciali."""
     if pd.isna(s):
         return ""
     return re.sub(r'[^A-Z0-9]', '', str(s).upper())
@@ -112,81 +107,26 @@ def check_brand_compatibility(shopify_tags, supplier_brand):
     return False
 
 def load_markup_rules(markup_file_content):
-    """
-    Carica le regole di markup in modo ROBUSTO.
-    Accetta Tab, CSV o Spazi. Trova le colonne automaticamente.
-    """
     markup_dict = {}
-    
-    # Markup di default (fallback)
-    default_markup = 1.50
-    markup_dict['DEFAULT'] = default_markup
-    markup_dict['BBR'] = 1.75 # Default BBR se manca nel file
-    
     try:
-        if not hasattr(markup_file_content, 'read'):
-            return markup_dict
-
-        markup_file_content.seek(0)
-        
-        # Tenta di leggere con engine python che supporta separatori multipli
-        # Gestisce separatori misti (tab, virgola, punto e virgola)
-        try:
-            df = pd.read_csv(markup_file_content, sep=None, engine='python')
-        except:
-            # Fallback brutale: leggi riga per riga
+        if hasattr(markup_file_content, 'read'):
             markup_file_content.seek(0)
-            content = markup_file_content.read().decode('utf-8', errors='ignore')
-            data = []
-            lines = content.splitlines()
-            if len(lines) > 0:
-                header = lines[0].split() # Split su spazi/tab
-                # Cerca indici
-                idx_tm = -1
-                idx_mk = -1
-                for i, h in enumerate(header):
-                    h_up = h.upper()
-                    if 'TRADEMARK' in h_up or 'BRAND' in h_up: idx_tm = i
-                    if 'MARKUP' in h_up or '%' in h_up: idx_mk = i
-                
-                if idx_tm >= 0 and idx_mk >= 0:
-                    for line in lines[1:]:
-                        parts = line.split() # Split flessibile
-                        if len(parts) > max(idx_tm, idx_mk):
-                            # Ricostruisci il brand se ha spazi (es. Sun Star)
-                            # Assumiamo che il markup sia l'ultima colonna numerica
-                            mk_val = parts[idx_mk]
-                            brand_val = " ".join(parts[idx_tm:idx_mk]) if idx_mk > idx_tm else parts[idx_tm]
-                            data.append({header[idx_tm]: brand_val, header[idx_mk]: mk_val})
-                    df = pd.DataFrame(data)
-                else:
-                    return markup_dict
-
-        # Normalizza nomi colonne del DataFrame caricato
-        df.columns = [str(c).strip().upper() for c in df.columns]
-        
-        # Identifica le colonne corrette
-        col_brand = next((c for c in df.columns if 'TRADEMARK' in c or 'BRAND' in c), None)
-        col_markup = next((c for c in df.columns if 'MARKUP' in c or '%' in c), None)
-
-        if col_brand and col_markup:
+            df = pd.read_csv(markup_file_content, sep='\t')
+        else:
+            return {}
+        if 'TRADEMARK' in df.columns and 'Markup %' in df.columns:
             for _, row in df.iterrows():
-                raw_brand = str(row[col_brand])
+                raw_brand = str(row['TRADEMARK'])
                 norm_brand = normalize_string(raw_brand)
-                
-                # Pulisci valore markup (gestione 1,62 e 1.62)
-                markup_str = str(row[col_markup]).replace(',', '.').replace('%', '').strip()
+                markup_str = str(row['Markup %']).replace(',', '.')
                 try:
                     markup_val = float(markup_str)
-                    # Se il valore è > 10 (es. 60 invece di 1.60), dividi per 100 e aggiungi 1?
-                    # No, assumiamo formato 1.60 o 1,60 come da file esempio.
                     markup_dict[norm_brand] = markup_val
                 except:
                     continue
-                    
     except Exception as e:
         print(f"Errore caricamento markup: {e}")
-        
+        markup_dict['BBR'] = 1.75
     return markup_dict
 
 def load_trademarks(file_obj):
@@ -207,30 +147,21 @@ def load_trademarks(file_obj):
     return trademarks
 
 def get_markup_for_brand(tags, brand_name, markup_dict):
-    """
-    Recupera il markup usando chiavi normalizzate.
-    """
-    default = markup_dict.get('DEFAULT', 1.50)
-    
-    # 1. Prova col brand del fornitore normalizzato
     if brand_name:
         norm_brand = normalize_string(brand_name)
         if norm_brand in markup_dict:
             return markup_dict[norm_brand]
     
-    # 2. Prova coi tag normalizzati
     if pd.notna(tags):
         tags_list = [t.strip() for t in str(tags).split(',')]
         for tag in tags_list:
             norm_tag = normalize_string(tag)
             clean_tag = norm_tag.replace('BRAND', '')
-            
             if clean_tag in markup_dict:
                 return markup_dict[clean_tag]
             if norm_tag in markup_dict:
                 return markup_dict[norm_tag]
-    
-    return default
+    return 1.50
 
 # ==========================================
 # LOGICA PRINCIPALE (V03)
@@ -314,7 +245,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 found_supplier = True
                 supplier_data = bbr_lookup[sku]
                 
-                # A) Aggiorna Costo BBR
+                # A) Aggiorna Costo BBR (mantiene valore reale)
                 supplier_cost = supplier_data['cost']
                 if supplier_cost > 0 and abs(supplier_cost - current_cost) > 0.01:
                     new_cost = supplier_cost
@@ -322,6 +253,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                     stats['updated_cost'] += 1
                 
                 # B) Aggiorna Qta BBR (FORZATURA A 1 se presente)
+                # Se nel file BBR c'è disponibilità > 0, mettiamo 1. Altrimenti 0.
                 real_bbr_qty = supplier_data['qty']
                 target_qty = 1 if real_bbr_qty > 0 else 0
                 
@@ -334,13 +266,14 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
 
             # 2. Check se è BBR ma non trovato nel file (Esclusione MCWS + Qty a 0)
             elif 'BBR' in normalize_string(tags):
-                # È un BBR (dal tag), ma non trovato nel file BBR.
+                # È un prodotto BBR (dal tag), ma non era nel file BBR_export.
+                # Richiesta utente: "Se non trova una corrispondenza sul file BBR_export, mette 0"
                 if current_qty > 0:
                     new_qty = 0
                     changes.append(f"QTY(BBR-Missing): {current_qty}->0")
                     stats['updated_qty'] += 1
                 
-                # STOP. Non cercare in MCWS.
+                # Fermiamo qui, non controlliamo MCWS
                 pass
 
             # 3. MCWS (Solo se non è BBR)
@@ -371,23 +304,16 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                             stats['updated_qty'] += 1
 
             # --- 3. AGGIORNAMENTO PREZZI ---
-            # Si attiva se il costo è cambiato O se il fornitore è trovato (per ricalcolo forzato opzionale)
-            # Qui ricalcoliamo sempre se c'è un fornitore attivo e il prezzo non torna col markup
-            
-            calc_markup = 1.50
-            if found_supplier:
-                calc_markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
-            
-            # Se abbiamo un nuovo costo (o quello vecchio confermato dal fornitore), calcoliamo il prezzo
-            if new_cost > 0 and found_supplier:
-                calculated_price = round(new_cost * calc_markup, 2)
+            if abs(new_cost - current_cost) > 0.01:
+                if found_supplier:
+                    markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
+                else:
+                    markup = 1.5 
                 
-                # Aggiorna se diverso da attuale (con tolleranza)
+                calculated_price = round(new_cost * markup, 2)
                 if abs(calculated_price - current_price) > 0.01:
                     new_price = calculated_price
-                    # Aggiungiamo log solo se non era già stato loggato il costo
-                    # o se è una modifica di puro prezzo
-                    changes.append(f"PRICE: {current_price:.2f}->{new_price:.2f} (Mk {calc_markup})")
+                    changes.append(f"PRICE: {current_price:.2f}->{new_price:.2f}")
                     stats['updated_price'] += 1
 
             # --- 4. SALVATAGGIO ---
