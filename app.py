@@ -7,8 +7,9 @@ from logic import (
 )
 from logic_v02 import (
     process_inventory_v02, OUTPUT_PREFIX as OUTPUT_PREFIX_V02,
-    COL_SKU, COL_VARIANT_SKU, COL_VARIANT_QTY, COL_VARIANT_COST, COL_VARIANT_PRICE,
-    COL_TAG, COL_COSTO_BBR, COL_NET_PRICE, COL_TRADEMARK, COL_BRAND, COL_CODE, COL_QTY
+    COL_SHOPIFY_SKU, COL_SHOPIFY_QTY, COL_SHOPIFY_COST, COL_SHOPIFY_PRICE,
+    COL_SHOPIFY_TAGS, COL_COSTO_BBR, COL_NET_PRICE, COL_BRAND,
+    COL_MCWS_CODE, COL_MCWS_TRADEMARK, COL_BBR_QTY, COL_CHANGE_LOG
 )
 
 # ==========================================
@@ -381,7 +382,7 @@ if ready_to_process:
                             with st.expander("📋 Change Log"):
                                 for idx, row in result_df.iterrows():
                                     if pd.notna(row.get('Change Log')) and row['Change Log']:
-                                        st.text(f"[{row.get(COL_VARIANT_SKU, 'N/A')}] {row['Change Log']}")
+                                        st.text(f"[{row.get(COL_SHOPIFY_SKU, 'N/A')}] {row['Change Log']}")
                     
                     # ==========================================
                     # DOWNLOAD
