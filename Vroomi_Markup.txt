@@ -1,0 +1,37 @@
+TRADEMARK	Markup %
+Alerte		1,50
+Autoart		1,50
+CMR		1,50
+Eligor		1,50
+Esval Models	1,50
+Kyosho		1,50
+LCD Models	1,50
+Looksmart	1,50
+MCG		1,50
+Mini Helmet	1,50
+Minichamps	1,50
+Motorhelix	1,50
+NZG		1,50
+Otto Mobile	1,50
+Schuco		1,50
+Spark Model	1,50
+Sun Star	1,50
+Trofeu		1,50
+Truescale	1,50
+GP Replicas	1,50
+GT Spirit	1,50
+KK Scale	1,50
+Stamp Models	1,52
+Top Marques	1,52
+Rio Models	1,54
+Avenue43	1,57
+Dm Models	1,60
+Ixo Models	1,60
+Maxima		1,60
+Norev		1,60
+Werk83		1,60
+Tecnomodel	1,62
+Acme Models	1,64
+Mitica		1,64
+Burago		1,70
+Solido		1,70
