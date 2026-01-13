@@ -675,25 +675,6 @@ def process_inventory_v02(
     log_messages.append(f"   - Variazioni COSTO: {stats['cost_updates_bbr'] + stats['cost_updates_mcws']}")
     
     return df_filtered, stats
-        
-        if not sku_clean:
-            stats['total_rows'] += 1
-        else:
-            # Aggiungi anche le righe senza modifiche all'inventario
-            # per poter elaborare costi e prezzi
-            pass
-    
-    # ==========================================
-    # 3. FILTRO VARIAZIONI (QTY o COSTO)
-    # ==========================================
-    # Filtra per mantenere solo righe con variazioni di QTY o COSTO
-    if 'change_count' in df_output.columns:
-        df_output = df_output[df_output['change_count'] > 0].copy()
-        df_output = df_output.drop(columns=['change_count'])
-    
-    log_messages.append(f"4. Righe finali con variazioni: {len(df_output)}")
-    
-    return df_output, stats
 
 
 # ==========================================
