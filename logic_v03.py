@@ -1,15 +1,16 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi, Prezzi e SALE
-Versione RIPRISTINATA (Logica Blindata "Ieri Sera"):
+Versione DEFINITIVA (Check Prezzo Universale):
 1. Identifica i prodotti BBR tramite TAGS.
 2. QTA BBR: 1 (se >0) o 0 (se missing).
 3. COSTI: Aggiorna solo se il fornitore ha un costo valido.
-4. PREZZI & SALE: 
-   - Se Costo Scende: CompareAt = VecchioPrezzo, Tag += SALE.
-   - Se Costo Sale: CompareAt = VUOTO, Tag -= SALE.
-   - Arrotondamento sempre a .90.
-5. Markup Loader robusto.
-6. Check SKU+Brand per evitare collisioni.
+4. CHECK PREZZI ATTIVO: 
+   - Calcola sempre il Prezzo Target (Costo * Markup).
+   - Se Target < Attuale: Attiva SALE (CompareAt = Vecchio, Tag += SALE).
+   - Se Target > Attuale: Disattiva SALE (CompareAt = Vuoto, Tag -= SALE).
+   - Se Target == Attuale: Passa oltre.
+5. ARROTONDAMENTO: Sempre a .90.
+6. Markup Loader robusto.
 """
 
 import pandas as pd
@@ -295,7 +296,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             found_supplier = False
             supplier_brand = ""
             
-            # --- FASE 1: AGGIORNAMENTO COSTI E QTA ---
+            # --- FASE 1: IDENTIFICAZIONE FORNITORE E AGG. DATI GREZZI ---
             
             # A. CHECK BBR
             if sku in bbr_lookup:
@@ -305,10 +306,11 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 
                 # Costo BBR
                 s_cost = supplier_data['cost']
-                if s_cost > 0 and abs(s_cost - current_cost) > 0.01:
-                    new_cost = s_cost
-                    changes.append(f"COST(BBR): {current_cost:.2f}->{new_cost:.2f}")
-                    stats['updated_cost'] += 1
+                if s_cost > 0:
+                    new_cost = s_cost # Assegna sempre il costo fornitore
+                    if abs(s_cost - current_cost) > 0.01:
+                        changes.append(f"COST(BBR): {current_cost:.2f}->{new_cost:.2f}")
+                        stats['updated_cost'] += 1
                 
                 # Qta BBR
                 target_qty = 1 if supplier_data['qty'] > 0 else 0
@@ -336,10 +338,11 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                         
                         # Costo MCWS
                         s_cost = match_obj['cost']
-                        if s_cost > 0 and abs(s_cost - current_cost) > 0.01:
-                            new_cost = s_cost
-                            changes.append(f"COST(MCWS): {current_cost:.2f}->{new_cost:.2f}")
-                            stats['updated_cost'] += 1
+                        if s_cost > 0:
+                            new_cost = s_cost # Assegna sempre costo fornitore
+                            if abs(s_cost - current_cost) > 0.01:
+                                changes.append(f"COST(MCWS): {current_cost:.2f}->{new_cost:.2f}")
+                                stats['updated_cost'] += 1
                         
                         # Qta MCWS
                         if current_qty == 0:
@@ -347,39 +350,40 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                             changes.append("QTY(MCWS): 0->1")
                             stats['updated_qty'] += 1
 
-            # --- FASE 2: GESTIONE PREZZI E SALE (SOLO SE COSTO CAMBIA) ---
+            # --- FASE 2: GESTIONE PREZZI E SALE (CHECK UNIVERSALE) ---
+            # Si attiva SEMPRE se abbiamo trovato il fornitore, per verificare coerenza Markup
             
-            # Controllo rigoroso del cambio costo
-            cost_diff = new_cost - current_cost
-            cost_has_changed = abs(cost_diff) > 0.01
-            
-            # Se il costo è cambiato e abbiamo un fornitore attivo
-            if cost_has_changed and found_supplier:
+            if found_supplier and new_cost > 0:
                 
-                # 1. Recupera Markup e Calcola Nuovo Prezzo Base
+                # 1. Calcola il Prezzo Target (Ideale)
                 markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
                 raw_price = new_cost * markup
-                calculated_price = round_price_to_90(raw_price)
+                target_price = round_price_to_90(raw_price)
                 
-                # 2. Logica SALE vs NO-SALE (Price Increase)
+                # 2. Confronta Target vs Attuale
                 
-                # CASO 1: Il costo è AUMENTATO (O rimasto quasi uguale ma diverso)
-                # Dobbiamo rimuovere SALE e aggiornare il prezzo normale
-                if new_cost > current_cost:
-                    new_compare = None # Rimuovi valore (pandas scrive NaN/vuoto)
-                    new_price = calculated_price
-                    new_tags = remove_sale_tag(tags)
-                    changes.append(f"PRICE UP (NO SALE): Price {current_price}->{new_price}, Compare Cleared")
-                    stats['updated_price'] += 1
+                # CASO 1: Il Target è più basso dell'attuale -> SCONTO
+                if target_price < current_price:
+                    # Verifica che non sia una differenza infinitesimale
+                    if abs(target_price - current_price) > 0.01:
+                        new_compare = current_price # Salva il vecchio prezzo come 'Compare'
+                        new_price = target_price    # Applica il nuovo
+                        new_tags = add_sale_tag(tags) # Metti Tag
+                        
+                        changes.append(f"SALE ACTIVATED: Price {current_price}->{new_price}, Compare set to {current_price}")
+                        stats['updated_price'] += 1
 
-                # CASO 2: Il costo è SCESO
-                # Attiviamo SALE
-                elif new_cost < current_cost:
-                    new_compare = current_price # Il vecchio prezzo diventa il 'Compare At'
-                    new_price = calculated_price
-                    new_tags = add_sale_tag(tags)
-                    changes.append(f"SALE ACTIVATED: Price {current_price}->{new_price}, Compare set to {current_price}")
-                    stats['updated_price'] += 1
+                # CASO 2: Il Target è più alto dell'attuale -> AUMENTO (Fine Sconto o Rincaro)
+                elif target_price > current_price:
+                    if abs(target_price - current_price) > 0.01:
+                        new_compare = None # Pulisci Compare
+                        new_price = target_price
+                        new_tags = remove_sale_tag(tags) # Togli Tag
+                        
+                        changes.append(f"PRICE UP / NO SALE: Price {current_price}->{new_price}, Compare Cleared")
+                        stats['updated_price'] += 1
+                
+                # CASO 3: Prezzi uguali -> Non fare nulla
 
             # --- SALVATAGGIO ---
             output_df.at[index, COL_QTY] = new_qty
