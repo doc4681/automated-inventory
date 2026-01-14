@@ -73,7 +73,7 @@ def load_dataframe(uploaded_file):
 # INTERFACCIA UTENTE
 # ==========================================
 
-st.markdown('<div class="main-header">📦 Inventory Sync WebApp</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📦 Automatede Inventory Sync WebApp</div>', unsafe_allow_html=True)
 st.markdown("Carica i listini inventario per generare il file di aggiornamento per Shopify")
 st.markdown("---")
 
@@ -87,8 +87,8 @@ if 'process_mode' not in st.session_state:
 st.markdown('<div class="sub-header">0. Seleziona Formato</div>', unsafe_allow_html=True)
 
 # Definisci costanti per le modalità
-MODE_ORIGINAL = "Formato Originale (3 file)"
-MODE_V03 = "Formato V03 (1 file Products.csv)"
+MODE_ORIGINAL = "Formato SOLO INVENTORY (Products.csv 6 colonne)"
+MODE_V03 = "Formato INVENTORY+COSTS+PRICE (Products.csv 12 colonne)"
 MODE_MARKUP = "Adeguamento Markup (Solo Prezzi)"
 
 # Logica per mantenere l'indice corretto
