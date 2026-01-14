@@ -1,11 +1,11 @@
 """
-logic_v03.py - Inventory Sync COMPLETO
-Versione: V03_FINAL (Inventory Fix)
+logic_v03.py - Inventory Sync con Gestione Dinamica Costi, Prezzi e SALE
+Versione DEFINITIVA (Con PRE-ORDER Protection):
 1. Identifica i prodotti BBR tramite TAGS.
-2. STOCK BBR: 1 (se presente) o 0 (se assente).
-3. STOCK MCWS: 1 (se presente) o 0 (se assente/non trovato).
-4. COSTI & PREZZI: Logica Dinamica con Check Universale e SALE.
-5. SAFETY: Check Prezzo >= CompareAt.
+2. PRE-ORDER: Se il tag esiste, la QTA non viene MAI toccata (ma costi/prezzi sì).
+3. STOCK: BBR e MCWS aggiornano lo stock (solo se NON è pre-order).
+4. COSTI: Aggiorna solo se il fornitore ha un costo valido.
+5. PREZZI & SALE: Logica dinamica (Check Universale) + Safety Check Shopify.
 6. OUTPUT: Selettore Output e Funzione Markup Only.
 """
 
@@ -276,6 +276,11 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             sku = str(row.get(COL_SKU, '')).strip()
             tags = str(row.get(COL_TAGS, ''))
             
+            # CHECK PRE-ORDER
+            # "PRE-ORDER" diventa "PREORDER" dopo la normalizzazione
+            norm_tags = normalize_string(tags)
+            is_preorder = 'PREORDER' in norm_tags
+            
             current_qty = clean_qty(row.get(COL_QTY, 0))
             current_cost = clean_currency(row.get(COL_COST, 0))
             current_price = clean_currency(row.get(COL_PRICE, 0))
@@ -308,17 +313,19 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                         changes.append(f"COST(BBR): {current_cost:.2f}->{new_cost:.2f}")
                         stats['updated_cost'] += 1
                 
-                # Qta BBR
-                target_qty = 1 if supplier_data['qty'] > 0 else 0
-                if target_qty != current_qty:
-                    new_qty = target_qty
-                    changes.append(f"QTY(BBR-Force): {current_qty}->{new_qty}")
-                    stats['updated_qty'] += 1
+                # Qta BBR (Bloccata se PRE-ORDER)
+                if not is_preorder:
+                    target_qty = 1 if supplier_data['qty'] > 0 else 0
+                    if target_qty != current_qty:
+                        new_qty = target_qty
+                        changes.append(f"QTY(BBR-Force): {current_qty}->{new_qty}")
+                        stats['updated_qty'] += 1
 
             # B. CHECK BBR ORFANO
-            elif 'BBR' in normalize_string(tags):
-                # Prodotto BBR ma non in listino -> 0
-                if current_qty > 0:
+            elif 'BBR' in norm_tags:
+                # Prodotto BBR ma non in listino
+                # Stock (Bloccato se PRE-ORDER)
+                if not is_preorder and current_qty > 0:
                     new_qty = 0
                     changes.append(f"QTY(BBR-Missing): {current_qty}->0")
                     stats['updated_qty'] += 1
@@ -343,20 +350,21 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                                 changes.append(f"COST(MCWS): {current_cost:.2f}->{new_cost:.2f}")
                                 stats['updated_cost'] += 1
                         
-                        # Qta MCWS (Disponibile -> 1)
-                        if current_qty == 0:
+                        # Qta MCWS (Bloccata se PRE-ORDER)
+                        if not is_preorder and current_qty == 0:
                             new_qty = 1
                             changes.append("QTY(MCWS): 0->1")
                             stats['updated_qty'] += 1
                             
                 # C2. NON TROVATO IN MCWS (e non è BBR) -> STOCK A 0
                 else:
-                    if current_qty > 0:
+                    if not is_preorder and current_qty > 0:
                         new_qty = 0
                         changes.append(f"QTY(Not in Stocklist): {current_qty}->0")
                         stats['updated_qty'] += 1
 
             # --- FASE 2: GESTIONE PREZZI E SALE (CHECK UNIVERSALE) ---
+            # Questa fase viene eseguita ANCHE se è un pre-order (costi e prezzi devono essere giusti)
             
             if found_supplier and new_cost > 0:
                 
@@ -370,8 +378,8 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 # CASO 1: Target è PIÙ BASSO -> ATTIVA SALE
                 if target_price < current_price:
                     if abs(target_price - current_price) > 0.01:
-                        new_compare = current_price 
-                        new_price = target_price    
+                        new_compare = current_price # Vecchio prezzo diventa sbarrato
+                        new_price = target_price    # Nuovo prezzo scontato
                         new_tags = add_sale_tag(tags)
                         changes.append(f"SALE ACTIVATED: Price {current_price:.2f}->{new_price:.2f}, Compare {current_price:.2f}")
                         stats['updated_price'] += 1
@@ -379,7 +387,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 # CASO 2: Target è PIÙ ALTO -> DISATTIVA SALE / AUMENTO PREZZO
                 elif target_price > current_price:
                     if abs(target_price - current_price) > 0.01:
-                        new_compare = "" 
+                        new_compare = "" # Pulisci Compare At (svuota campo)
                         new_price = target_price
                         new_tags = remove_sale_tag(tags)
                         changes.append(f"PRICE UP / NO SALE: Price {current_price:.2f}->{new_price:.2f}, Compare Cleared")
@@ -484,6 +492,7 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
                 raw_price = current_cost * markup
                 target_price = round_price_to_90(raw_price)
                 
+                # Check Universale anche qui
                 if target_price != current_price:
                     
                     if target_price < current_price:
