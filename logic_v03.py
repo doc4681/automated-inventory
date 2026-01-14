@@ -1,13 +1,15 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi, Prezzi e SALE
-Versione DEFINITIVA (Con selettore Output Intero/Parziale):
+Versione RIPRISTINATA (Logica Blindata "Ieri Sera"):
 1. Identifica i prodotti BBR tramite TAGS.
 2. QTA BBR: 1 (se >0) o 0 (se missing).
 3. COSTI: Aggiorna solo se il fornitore ha un costo valido.
-4. PREZZI & SALE: Gestione automatica tag SALE e Compare At Price.
-5. ARROTONDAMENTO: Sempre a .90.
-6. OUTPUT: Selettore per Output Intero o Solo Modifiche.
-7. ADEGUAMENTO MARKUP: Funzione separata.
+4. PREZZI & SALE: 
+   - Se Costo Scende: CompareAt = VecchioPrezzo, Tag += SALE.
+   - Se Costo Sale: CompareAt = VUOTO, Tag -= SALE.
+   - Arrotondamento sempre a .90.
+5. Markup Loader robusto.
+6. Check SKU+Brand per evitare collisioni.
 """
 
 import pandas as pd
@@ -218,10 +220,6 @@ def get_markup_for_brand(tags, brand_name, markup_dict):
 # LOGICA PRINCIPALE (V03 - SYNC INVENTORY)
 # ==========================================
 def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file, include_change_log=True, only_changes=True):
-    """
-    Parametri:
-    - only_changes: Se True, restituisce solo le righe modificate. Se False, restituisce tutto.
-    """
     
     # --- 1. PREPARAZIONE DATI ---
     markup_rules = load_markup_rules(markup_file)
@@ -286,6 +284,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             current_price = clean_currency(row.get(COL_PRICE, 0))
             current_compare = row.get(COL_COMPARE, '')
             
+            # Variabili di lavoro (Default = invariato)
             new_qty = current_qty
             new_cost = current_cost
             new_price = current_price
@@ -350,30 +349,36 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
 
             # --- FASE 2: GESTIONE PREZZI E SALE (SOLO SE COSTO CAMBIA) ---
             
+            # Controllo rigoroso del cambio costo
             cost_diff = new_cost - current_cost
             cost_has_changed = abs(cost_diff) > 0.01
             
+            # Se il costo è cambiato e abbiamo un fornitore attivo
             if cost_has_changed and found_supplier:
                 
-                # Calcola Nuovo Prezzo
+                # 1. Recupera Markup e Calcola Nuovo Prezzo Base
                 markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
                 raw_price = new_cost * markup
                 calculated_price = round_price_to_90(raw_price)
                 
-                # CASO 1: Costo SCENDE -> Attiva SALE
-                if new_cost < current_cost:
-                    new_compare = current_price
-                    new_price = calculated_price
-                    new_tags = add_sale_tag(tags)
-                    changes.append(f"SALE: Price {current_price}->{new_price}, Compare {current_price}")
-                    stats['updated_price'] += 1
-
-                # CASO 2: Costo SALE -> Rimuovi SALE
-                elif new_cost > current_cost:
-                    new_compare = ""
+                # 2. Logica SALE vs NO-SALE (Price Increase)
+                
+                # CASO 1: Il costo è AUMENTATO (O rimasto quasi uguale ma diverso)
+                # Dobbiamo rimuovere SALE e aggiornare il prezzo normale
+                if new_cost > current_cost:
+                    new_compare = None # Rimuovi valore (pandas scrive NaN/vuoto)
                     new_price = calculated_price
                     new_tags = remove_sale_tag(tags)
-                    changes.append(f"PRICE UP: Price {current_price}->{new_price}")
+                    changes.append(f"PRICE UP (NO SALE): Price {current_price}->{new_price}, Compare Cleared")
+                    stats['updated_price'] += 1
+
+                # CASO 2: Il costo è SCESO
+                # Attiviamo SALE
+                elif new_cost < current_cost:
+                    new_compare = current_price # Il vecchio prezzo diventa il 'Compare At'
+                    new_price = calculated_price
+                    new_tags = add_sale_tag(tags)
+                    changes.append(f"SALE ACTIVATED: Price {current_price}->{new_price}, Compare set to {current_price}")
                     stats['updated_price'] += 1
 
             # --- SALVATAGGIO ---
@@ -400,12 +405,9 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
     stats['cost_changes'] = stats['updated_cost']
 
     # === FILTRO FINALE ===
-    
     if only_changes:
-        # Restituisci SOLO le righe modificate
         final_df = output_df[output_df[COL_CHANGE_LOG] != '']
     else:
-        # Restituisci TUTTO il dataframe
         final_df = output_df
     
     if not include_change_log:
@@ -421,7 +423,6 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
     """
     Funzione indipendente per ricalcolare i prezzi di tutto il file.
     """
-    
     markup_rules = load_markup_rules(markup_file)
     valid_trademarks_normalized = load_trademarks(valid_trademarks_file)
     
