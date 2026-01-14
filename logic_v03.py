@@ -1,16 +1,15 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi, Prezzi e SALE
-Versione DEFINITIVA (Check Prezzo Universale):
+Versione RIPRISTINATA (Check Universale + Funzioni Output):
 1. Identifica i prodotti BBR tramite TAGS.
 2. QTA BBR: 1 (se >0) o 0 (se missing).
 3. COSTI: Aggiorna solo se il fornitore ha un costo valido.
-4. CHECK PREZZI ATTIVO: 
-   - Calcola sempre il Prezzo Target (Costo * Markup).
-   - Se Target < Attuale: Attiva SALE (CompareAt = Vecchio, Tag += SALE).
-   - Se Target > Attuale: Disattiva SALE (CompareAt = Vuoto, Tag -= SALE).
-   - Se Target == Attuale: Passa oltre.
+4. PREZZI & SALE (CHECK UNIVERSALE): 
+   - Calcola sempre il Prezzo Target.
+   - Se Target != Attuale -> Applica logica SALE o AUMENTO.
+   - Questo corregge anche prezzi sbagliati dove il costo non è cambiato.
 5. ARROTONDAMENTO: Sempre a .90.
-6. Markup Loader robusto.
+6. OUTPUT: Selettore per Output Intero o Solo Modifiche.
 """
 
 import pandas as pd
@@ -296,7 +295,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             found_supplier = False
             supplier_brand = ""
             
-            # --- FASE 1: IDENTIFICAZIONE FORNITORE E AGG. DATI GREZZI ---
+            # --- FASE 1: AGGIORNAMENTO COSTI E QTA ---
             
             # A. CHECK BBR
             if sku in bbr_lookup:
@@ -307,7 +306,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 # Costo BBR
                 s_cost = supplier_data['cost']
                 if s_cost > 0:
-                    new_cost = s_cost # Assegna sempre il costo fornitore
+                    new_cost = s_cost
                     if abs(s_cost - current_cost) > 0.01:
                         changes.append(f"COST(BBR): {current_cost:.2f}->{new_cost:.2f}")
                         stats['updated_cost'] += 1
@@ -339,7 +338,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                         # Costo MCWS
                         s_cost = match_obj['cost']
                         if s_cost > 0:
-                            new_cost = s_cost # Assegna sempre costo fornitore
+                            new_cost = s_cost
                             if abs(s_cost - current_cost) > 0.01:
                                 changes.append(f"COST(MCWS): {current_cost:.2f}->{new_cost:.2f}")
                                 stats['updated_cost'] += 1
@@ -351,39 +350,35 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                             stats['updated_qty'] += 1
 
             # --- FASE 2: GESTIONE PREZZI E SALE (CHECK UNIVERSALE) ---
-            # Si attiva SEMPRE se abbiamo trovato il fornitore, per verificare coerenza Markup
             
             if found_supplier and new_cost > 0:
                 
-                # 1. Calcola il Prezzo Target (Ideale)
+                # 1. Calcola Target Price (in base al Nuovo Costo)
                 markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
                 raw_price = new_cost * markup
                 target_price = round_price_to_90(raw_price)
                 
                 # 2. Confronta Target vs Attuale
                 
-                # CASO 1: Il Target è più basso dell'attuale -> SCONTO
+                # CASO 1: Target è PIÙ BASSO -> ATTIVA SALE
                 if target_price < current_price:
-                    # Verifica che non sia una differenza infinitesimale
                     if abs(target_price - current_price) > 0.01:
-                        new_compare = current_price # Salva il vecchio prezzo come 'Compare'
-                        new_price = target_price    # Applica il nuovo
-                        new_tags = add_sale_tag(tags) # Metti Tag
-                        
-                        changes.append(f"SALE ACTIVATED: Price {current_price}->{new_price}, Compare set to {current_price}")
+                        new_compare = current_price # Vecchio prezzo diventa sbarrato
+                        new_price = target_price    # Nuovo prezzo scontato
+                        new_tags = add_sale_tag(tags)
+                        changes.append(f"SALE ACTIVATED: Price {current_price:.2f}->{new_price:.2f}, Compare {current_price:.2f}")
                         stats['updated_price'] += 1
 
-                # CASO 2: Il Target è più alto dell'attuale -> AUMENTO (Fine Sconto o Rincaro)
+                # CASO 2: Target è PIÙ ALTO -> DISATTIVA SALE / AUMENTO PREZZO
                 elif target_price > current_price:
                     if abs(target_price - current_price) > 0.01:
-                        new_compare = None # Pulisci Compare
+                        new_compare = "" # Pulisci Compare At (svuota campo)
                         new_price = target_price
-                        new_tags = remove_sale_tag(tags) # Togli Tag
-                        
-                        changes.append(f"PRICE UP / NO SALE: Price {current_price}->{new_price}, Compare Cleared")
+                        new_tags = remove_sale_tag(tags)
+                        changes.append(f"PRICE UP / NO SALE: Price {current_price:.2f}->{new_price:.2f}, Compare Cleared")
                         stats['updated_price'] += 1
                 
-                # CASO 3: Prezzi uguali -> Non fare nulla
+                # CASO 3: Target == Attuale -> Nessuna modifica
 
             # --- SALVATAGGIO ---
             output_df.at[index, COL_QTY] = new_qty
@@ -436,6 +431,8 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
     output_df = df_shopify.copy()
     if COL_CHANGE_LOG not in output_df.columns:
         output_df[COL_CHANGE_LOG] = ''
+    if COL_COMPARE not in output_df.columns:
+        output_df[COL_COMPARE] = ''
         
     for index, row in output_df.iterrows():
         try:
@@ -468,14 +465,35 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
             if found_valid_brand:
                 markup = get_markup_for_brand(tags, found_valid_brand, markup_rules)
                 raw_price = current_cost * markup
-                new_price = round_price_to_90(raw_price)
+                target_price = round_price_to_90(raw_price)
                 
-                if abs(new_price - current_price) > 0.01:
-                    output_df.at[index, COL_PRICE] = new_price
-                    output_df.at[index, COL_CHANGE_LOG] = f"MARKUP UPDATE: {current_price}->{new_price} (Mk {markup})"
+                # Check Universale anche qui
+                if target_price != current_price:
+                    # Se prezzo cambia, applica logica SALE/NO SALE anche qui?
+                    # La richiesta era "moltiplica per markup e inserisci". 
+                    # Ma per coerenza applichiamo logica base: aggiorna price.
+                    
+                    # Se Target < Attuale -> Sale
+                    if target_price < current_price:
+                        output_df.at[index, COL_COMPARE] = current_price
+                        output_df.at[index, COL_PRICE] = target_price
+                        # Aggiungi Tag
+                        new_tags = add_sale_tag(tags)
+                        output_df.at[index, COL_TAGS] = new_tags
+                        output_df.at[index, COL_CHANGE_LOG] = f"MARKUP SALE: {current_price}->{target_price}"
+                    
+                    # Se Target > Attuale -> Price Up
+                    else:
+                        output_df.at[index, COL_COMPARE] = ""
+                        output_df.at[index, COL_PRICE] = target_price
+                        # Rimuovi Tag
+                        new_tags = remove_sale_tag(tags)
+                        output_df.at[index, COL_TAGS] = new_tags
+                        output_df.at[index, COL_CHANGE_LOG] = f"MARKUP UP: {current_price}->{target_price}"
+                        
                     stats['updated_price'] += 1
                 else:
-                    output_df.at[index, COL_CHANGE_LOG] = "OK (Prezzo Corretto)"
+                    output_df.at[index, COL_CHANGE_LOG] = "OK"
             else:
                 stats['skipped'] += 1
                 
