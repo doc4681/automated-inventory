@@ -1,15 +1,12 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi, Prezzi e SALE
-Versione RIPRISTINATA (Check Universale + Funzioni Output):
+Versione DEFINITIVA (Con Safety Check Shopify):
 1. Identifica i prodotti BBR tramite TAGS.
 2. QTA BBR: 1 (se >0) o 0 (se missing).
 3. COSTI: Aggiorna solo se il fornitore ha un costo valido.
-4. PREZZI & SALE (CHECK UNIVERSALE): 
-   - Calcola sempre il Prezzo Target.
-   - Se Target != Attuale -> Applica logica SALE o AUMENTO.
-   - Questo corregge anche prezzi sbagliati dove il costo non è cambiato.
-5. ARROTONDAMENTO: Sempre a .90.
-6. OUTPUT: Selettore per Output Intero o Solo Modifiche.
+4. PREZZI & SALE: Logica dinamica su cambio costo/prezzo.
+5. SAFETY CHECK: Se Prezzo >= CompareAt -> Pulisce CompareAt e rimuove SALE (Cruciale per Shopify).
+6. OUTPUT: Selettore Output e Markup Only.
 """
 
 import pandas as pd
@@ -295,7 +292,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             found_supplier = False
             supplier_brand = ""
             
-            # --- FASE 1: AGGIORNAMENTO COSTI E QTA ---
+            # --- FASE 1: IDENTIFICAZIONE FORNITORE E AGG. DATI GREZZI ---
             
             # A. CHECK BBR
             if sku in bbr_lookup:
@@ -353,7 +350,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             
             if found_supplier and new_cost > 0:
                 
-                # 1. Calcola Target Price (in base al Nuovo Costo)
+                # 1. Calcola il Prezzo Target (Ideale)
                 markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
                 raw_price = new_cost * markup
                 target_price = round_price_to_90(raw_price)
@@ -372,13 +369,27 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 # CASO 2: Target è PIÙ ALTO -> DISATTIVA SALE / AUMENTO PREZZO
                 elif target_price > current_price:
                     if abs(target_price - current_price) > 0.01:
-                        new_compare = "" # Pulisci Compare At (svuota campo)
+                        new_compare = "" # Pulisci Compare At
                         new_price = target_price
                         new_tags = remove_sale_tag(tags)
                         changes.append(f"PRICE UP / NO SALE: Price {current_price:.2f}->{new_price:.2f}, Compare Cleared")
                         stats['updated_price'] += 1
                 
-                # CASO 3: Target == Attuale -> Nessuna modifica
+                # CASO 3: Target == Attuale -> Nessuna modifica per ora
+
+            # --- FASE 3: SAFETY CHECK SHOPIFY (CRUCIALE) ---
+            # Se dopo i calcoli ci troviamo con Price >= Compare At, correggiamo subito
+            # perché Shopify non accetta un prezzo di vendita più alto o uguale a quello sbarrato.
+            
+            val_compare = clean_currency(new_compare)
+            if val_compare > 0 and new_price >= val_compare:
+                # Correzione forzata
+                new_compare = ""
+                new_tags = remove_sale_tag(new_tags)
+                
+                # Aggiungi al log solo se stiamo cambiando qualcosa che non avevamo già cambiato
+                if val_compare != clean_currency(current_compare) or "PRICE UP" not in str(changes):
+                     changes.append(f"FIX SHOPIFY: Price ({new_price}) >= Compare ({val_compare}) -> Sale Removed")
 
             # --- SALVATAGGIO ---
             output_df.at[index, COL_QTY] = new_qty
@@ -421,6 +432,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
 def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
     """
     Funzione indipendente per ricalcolare i prezzi di tutto il file.
+    Include anche qui il safety check per Shopify.
     """
     markup_rules = load_markup_rules(markup_file)
     valid_trademarks_normalized = load_trademarks(valid_trademarks_file)
@@ -443,6 +455,7 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
             
             current_cost = clean_currency(row.get(COL_COST, 0))
             current_price = clean_currency(row.get(COL_PRICE, 0))
+            current_compare = clean_currency(row.get(COL_COMPARE, 0))
             
             if current_cost <= 0:
                 stats['skipped'] += 1
@@ -469,15 +482,11 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
                 
                 # Check Universale anche qui
                 if target_price != current_price:
-                    # Se prezzo cambia, applica logica SALE/NO SALE anche qui?
-                    # La richiesta era "moltiplica per markup e inserisci". 
-                    # Ma per coerenza applichiamo logica base: aggiorna price.
                     
                     # Se Target < Attuale -> Sale
                     if target_price < current_price:
                         output_df.at[index, COL_COMPARE] = current_price
                         output_df.at[index, COL_PRICE] = target_price
-                        # Aggiungi Tag
                         new_tags = add_sale_tag(tags)
                         output_df.at[index, COL_TAGS] = new_tags
                         output_df.at[index, COL_CHANGE_LOG] = f"MARKUP SALE: {current_price}->{target_price}"
@@ -486,14 +495,22 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
                     else:
                         output_df.at[index, COL_COMPARE] = ""
                         output_df.at[index, COL_PRICE] = target_price
-                        # Rimuovi Tag
                         new_tags = remove_sale_tag(tags)
                         output_df.at[index, COL_TAGS] = new_tags
                         output_df.at[index, COL_CHANGE_LOG] = f"MARKUP UP: {current_price}->{target_price}"
                         
                     stats['updated_price'] += 1
-                else:
-                    output_df.at[index, COL_CHANGE_LOG] = "OK"
+                
+                # SAFETY CHECK ANCHE QUI
+                # Rileggiamo i valori che stiamo per salvare
+                check_price = output_df.at[index, COL_PRICE]
+                check_compare = clean_currency(output_df.at[index, COL_COMPARE])
+                
+                if check_compare > 0 and check_price >= check_compare:
+                    output_df.at[index, COL_COMPARE] = ""
+                    current_tags_final = output_df.at[index, COL_TAGS]
+                    output_df.at[index, COL_TAGS] = remove_sale_tag(current_tags_final)
+                    
             else:
                 stats['skipped'] += 1
                 
