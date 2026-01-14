@@ -35,3 +35,4 @@ Acme Models	1,64
 Mitica		1,64
 Burago		1,70
 Solido		1,70
+BBR-MODELS		1,75
