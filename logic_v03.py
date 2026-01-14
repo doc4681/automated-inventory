@@ -1,13 +1,13 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi, Prezzi e SALE
-Versione DEFINITIVA (Output Filtrato + Opzione Change Log + Funzione Markup Only):
+Versione DEFINITIVA (Con selettore Output Intero/Parziale):
 1. Identifica i prodotti BBR tramite TAGS.
 2. QTA BBR: 1 (se >0) o 0 (se missing).
 3. COSTI: Aggiorna solo se il fornitore ha un costo valido.
 4. PREZZI & SALE: Gestione automatica tag SALE e Compare At Price.
 5. ARROTONDAMENTO: Sempre a .90.
-6. OUTPUT: Restituisce SOLO le righe modificate (in V03).
-7. ADEGUAMENTO MARKUP: Funzione separata per ricalcolo massivo prezzi su file intero.
+6. OUTPUT: Selettore per Output Intero o Solo Modifiche.
+7. ADEGUAMENTO MARKUP: Funzione separata.
 """
 
 import pandas as pd
@@ -217,7 +217,11 @@ def get_markup_for_brand(tags, brand_name, markup_dict):
 # ==========================================
 # LOGICA PRINCIPALE (V03 - SYNC INVENTORY)
 # ==========================================
-def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file, include_change_log=True):
+def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file, include_change_log=True, only_changes=True):
+    """
+    Parametri:
+    - only_changes: Se True, restituisce solo le righe modificate. Se False, restituisce tutto.
+    """
     
     # --- 1. PREPARAZIONE DATI ---
     markup_rules = load_markup_rules(markup_file)
@@ -344,7 +348,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                             changes.append("QTY(MCWS): 0->1")
                             stats['updated_qty'] += 1
 
-            # --- FASE 2: GESTIONE PREZZI E SALE ---
+            # --- FASE 2: GESTIONE PREZZI E SALE (SOLO SE COSTO CAMBIA) ---
             
             cost_diff = new_cost - current_cost
             cost_has_changed = abs(cost_diff) > 0.01
@@ -395,25 +399,29 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
     stats['qty_changes'] = stats['updated_qty']
     stats['cost_changes'] = stats['updated_cost']
 
-    # === FILTRO FINALE: RESTITUISCI SOLO LE RIGHE MODIFICATE ===
-    df_changes_only = output_df[output_df[COL_CHANGE_LOG] != '']
+    # === FILTRO FINALE ===
+    
+    if only_changes:
+        # Restituisci SOLO le righe modificate
+        final_df = output_df[output_df[COL_CHANGE_LOG] != '']
+    else:
+        # Restituisci TUTTO il dataframe
+        final_df = output_df
     
     if not include_change_log:
-        df_changes_only = df_changes_only.drop(columns=[COL_CHANGE_LOG], errors='ignore')
+        final_df = final_df.drop(columns=[COL_CHANGE_LOG], errors='ignore')
 
-    return df_changes_only, stats, [], logs
+    return final_df, stats, [], logs
 
 
 # ==========================================
-# NUOVA FUNZIONE: ADEGUAMENTO MARKUP ONLY
+# FUNZIONE: ADEGUAMENTO MARKUP ONLY
 # ==========================================
 def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
     """
-    Funzione indipendente per ricalcolare i prezzi di tutto il file
-    basandosi solo sui COSTI attuali e sui MARKUP dei marchi VALIDI.
+    Funzione indipendente per ricalcolare i prezzi di tutto il file.
     """
     
-    # Carica risorse
     markup_rules = load_markup_rules(markup_file)
     valid_trademarks_normalized = load_trademarks(valid_trademarks_file)
     
@@ -438,34 +446,25 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
                 stats['skipped'] += 1
                 continue
                 
-            # 1. IDENTIFICA IL MARCHIO VALIDO DAI TAGS
-            # Dobbiamo trovare se uno dei tag corrisponde a un marchio valido
             found_valid_brand = None
-            
             if pd.notna(tags):
                 tags_list = [t.strip() for t in str(tags).split(',')]
                 for tag in tags_list:
                     norm_tag = normalize_string(tag)
                     norm_tag_clean = norm_tag.replace('BRAND', '')
                     
-                    # Controlla se è un marchio valido
                     if norm_tag in valid_trademarks_normalized:
-                        found_valid_brand = norm_tag # Tieni la versione normalizzata
+                        found_valid_brand = norm_tag
                         break
                     if norm_tag_clean in valid_trademarks_normalized:
                         found_valid_brand = norm_tag_clean
                         break
             
-            # 2. SE IL MARCHIO È VALIDO, PROCEDI AL CALCOLO
             if found_valid_brand:
-                # Trova Markup (passiamo tags e il brand trovato)
                 markup = get_markup_for_brand(tags, found_valid_brand, markup_rules)
-                
-                # Calcola Prezzo
                 raw_price = current_cost * markup
                 new_price = round_price_to_90(raw_price)
                 
-                # Aggiorna se diverso
                 if abs(new_price - current_price) > 0.01:
                     output_df.at[index, COL_PRICE] = new_price
                     output_df.at[index, COL_CHANGE_LOG] = f"MARKUP UPDATE: {current_price}->{new_price} (Mk {markup})"
@@ -474,7 +473,6 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
                     output_df.at[index, COL_CHANGE_LOG] = "OK (Prezzo Corretto)"
             else:
                 stats['skipped'] += 1
-                # output_df.at[index, COL_CHANGE_LOG] = "SKIP (Marchio non valido o assente)"
                 
         except Exception as e:
             stats['errors'] += 1
