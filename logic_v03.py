@@ -1,12 +1,15 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi, Prezzi e SALE
-Versione DEFINITIVA (Fix Pre-Order Detection):
+Versione DEFINITIVA (Con Regole Markup per Fasce di Costo):
 1. Identifica i prodotti BBR tramite TAGS.
-2. PRE-ORDER: Rilevamento potenziato (PRE-ORDER, PRE ORDER, PREORDER).
-   - Se rilevato: QTA BLOCCATA (non viene mai modificata).
+2. PRE-ORDER: Rilevamento potenziato (QTA BLOCCATA).
 3. COSTI: Aggiorna solo se il fornitore ha un costo valido.
-4. PREZZI & SALE: Logica dinamica (Check Universale) + Safety Check Shopify.
-5. STOCK: Aggiorna BBR/MCWS solo se non è pre-order.
+4. MARKUP DINAMICO:
+   - Se Costo < 10€: Markup 2.2 (Priorità assoluta)
+   - Se Costo < 20€: Markup 1.9 (Priorità assoluta)
+   - Altrimenti: Markup da Brand (File TXT)
+5. PREZZI & SALE: Logica dinamica (Check Universale) + Safety Check Shopify.
+6. STOCK: Aggiorna BBR/MCWS solo se non è pre-order.
 """
 
 import pandas as pd
@@ -20,6 +23,13 @@ import math
 # ==========================================
 
 OUTPUT_PREFIX = "INVENTORY_UPDATE_V03"
+
+# --- CONFIGURAZIONE MARKUP BASSO COSTO ---
+# Queste regole vincono su qualsiasi trademark
+COST_THRESHOLD_LOW = 10.0   # Sotto questa cifra...
+MARKUP_LOW = 2.2            # ...usa questo markup
+COST_THRESHOLD_MID = 20.0   # Sotto questa cifra (ma sopra la Low)...
+MARKUP_MID = 1.9            # ...usa questo markup
 
 # Nomi colonne file Shopify (Products_all.csv)
 COL_SHOPIFY_SKU = 'Variant SKU'
@@ -264,6 +274,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
     output_df = df_shopify.copy()
     if COL_CHANGE_LOG not in output_df.columns:
         output_df[COL_CHANGE_LOG] = ''
+    
     if COL_COMPARE not in output_df.columns:
         output_df[COL_COMPARE] = ''
 
@@ -279,7 +290,6 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             tags_upper = tags.upper()
             norm_tags = normalize_string(tags)
             
-            # Controlla tutte le possibili varianti
             is_preorder = (
                 'PRE-ORDER' in tags_upper or 
                 'PRE ORDER' in tags_upper or 
@@ -291,7 +301,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             current_price = clean_currency(row.get(COL_PRICE, 0))
             current_compare = row.get(COL_COMPARE, '')
             
-            # Variabili di lavoro (Default = invariato)
+            # Variabili di lavoro
             new_qty = current_qty
             new_cost = current_cost
             new_price = current_price
@@ -310,7 +320,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 supplier_data = bbr_lookup[sku]
                 supplier_brand = "BBR"
                 
-                # Costo BBR (Sempre aggiornabile, anche se Pre-order)
+                # Costo BBR
                 s_cost = supplier_data['cost']
                 if s_cost > 0:
                     new_cost = s_cost
@@ -326,9 +336,8 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                         changes.append(f"QTY(BBR-Force): {current_qty}->{new_qty}")
                         stats['updated_qty'] += 1
 
-            # B. CHECK BBR ORFANO (Tag BBR ma non in listino)
+            # B. CHECK BBR ORFANO
             elif 'BBR' in norm_tags:
-                # Stock (BLOCCATO SE PRE-ORDER)
                 if not is_preorder and current_qty > 0:
                     new_qty = 0
                     changes.append(f"QTY(BBR-Missing): {current_qty}->0")
@@ -338,7 +347,6 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             else:
                 match_obj = mcws_lookup.get(sku)
                 
-                # C1. TROVATO IN MCWS
                 if match_obj:
                     mcws_brand = match_obj['brand']
                     
@@ -359,49 +367,50 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                             new_qty = 1
                             changes.append("QTY(MCWS): 0->1")
                             stats['updated_qty'] += 1
-                            
-                # C2. NON TROVATO IN MCWS (e non è BBR) -> STOCK A 0
                 else:
-                    # (BLOCCATO SE PRE-ORDER)
+                    # NON TROVATO (BLOCCATO SE PRE-ORDER)
                     if not is_preorder and current_qty > 0:
                         new_qty = 0
                         changes.append(f"QTY(Not in Stocklist): {current_qty}->0")
                         stats['updated_qty'] += 1
 
             # --- FASE 2: GESTIONE PREZZI E SALE (CHECK UNIVERSALE) ---
-            # Questa fase viene eseguita ANCHE se è un pre-order (i prezzi devono essere giusti)
             
             if found_supplier and new_cost > 0:
                 
-                # 1. Calcola il Prezzo Target (Ideale)
-                markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
+                # >>> APPLICAZIONE REGOLE MARKUP DINAMICHE <<<
+                if new_cost < COST_THRESHOLD_LOW:
+                    markup = MARKUP_LOW
+                elif new_cost < COST_THRESHOLD_MID:
+                    markup = MARKUP_MID
+                else:
+                    markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
+                
+                # Calcola Target Price
                 raw_price = new_cost * markup
                 target_price = round_price_to_90(raw_price)
                 
-                # 2. Confronta Target vs Attuale
+                # Confronta Target vs Attuale
                 
-                # CASO 1: Target è PIÙ BASSO -> ATTIVA SALE
+                # CASO 1: SALE ACTIVATED (Target < Attuale)
                 if target_price < current_price:
                     if abs(target_price - current_price) > 0.01:
                         new_compare = current_price 
                         new_price = target_price    
                         new_tags = add_sale_tag(tags)
-                        changes.append(f"SALE ACTIVATED: Price {current_price:.2f}->{new_price:.2f}, Compare {current_price:.2f}")
+                        changes.append(f"SALE ACTIVATED: Price {current_price:.2f}->{new_price:.2f} (Mk {markup}), Compare {current_price:.2f}")
                         stats['updated_price'] += 1
 
-                # CASO 2: Target è PIÙ ALTO -> DISATTIVA SALE / AUMENTO PREZZO
+                # CASO 2: PRICE UP (Target > Attuale)
                 elif target_price > current_price:
                     if abs(target_price - current_price) > 0.01:
                         new_compare = "" 
                         new_price = target_price
                         new_tags = remove_sale_tag(tags)
-                        changes.append(f"PRICE UP / NO SALE: Price {current_price:.2f}->{new_price:.2f}, Compare Cleared")
+                        changes.append(f"PRICE UP: Price {current_price:.2f}->{new_price:.2f} (Mk {markup}), Compare Cleared")
                         stats['updated_price'] += 1
-                
-                # CASO 3: Target == Attuale -> Nessuna modifica per ora
 
             # --- FASE 3: SAFETY CHECK SHOPIFY ---
-            
             val_compare = clean_currency(new_compare)
             if val_compare > 0 and new_price >= val_compare:
                 new_compare = ""
@@ -448,6 +457,10 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
 # FUNZIONE: ADEGUAMENTO MARKUP ONLY
 # ==========================================
 def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
+    """
+    Funzione indipendente per ricalcolare i prezzi di tutto il file.
+    Applica anche qui le regole di costo < 10 / < 20.
+    """
     markup_rules = load_markup_rules(markup_file)
     valid_trademarks_normalized = load_trademarks(valid_trademarks_file)
     
@@ -489,12 +502,25 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
                         found_valid_brand = norm_tag_clean
                         break
             
-            if found_valid_brand:
-                markup = get_markup_for_brand(tags, found_valid_brand, markup_rules)
+            if found_valid_brand or current_cost > 0: 
+                # Nota: Applico le regole di costo anche se il brand non è nella lista dei validi?
+                # La richiesta era "Indipendentemente dal trademark".
+                # Se il brand è valido o se stiamo facendo un pass generale:
+                
+                # Determina Markup
+                if current_cost < COST_THRESHOLD_LOW:
+                    markup = MARKUP_LOW
+                elif current_cost < COST_THRESHOLD_MID:
+                    markup = MARKUP_MID
+                elif found_valid_brand:
+                    markup = get_markup_for_brand(tags, found_valid_brand, markup_rules)
+                else:
+                    markup = 1.5 # Fallback se brand non valido ma costo > 20
+                
                 raw_price = current_cost * markup
                 target_price = round_price_to_90(raw_price)
                 
-                # Check Universale anche qui
+                # Check Universale
                 if target_price != current_price:
                     
                     if target_price < current_price:
@@ -502,14 +528,14 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
                         output_df.at[index, COL_PRICE] = target_price
                         new_tags = add_sale_tag(tags)
                         output_df.at[index, COL_TAGS] = new_tags
-                        output_df.at[index, COL_CHANGE_LOG] = f"MARKUP SALE: {current_price}->{target_price}"
+                        output_df.at[index, COL_CHANGE_LOG] = f"MARKUP SALE: {current_price}->{target_price} (Mk {markup})"
                     
                     else:
                         output_df.at[index, COL_COMPARE] = ""
                         output_df.at[index, COL_PRICE] = target_price
                         new_tags = remove_sale_tag(tags)
                         output_df.at[index, COL_TAGS] = new_tags
-                        output_df.at[index, COL_CHANGE_LOG] = f"MARKUP UP: {current_price}->{target_price}"
+                        output_df.at[index, COL_CHANGE_LOG] = f"MARKUP UP: {current_price}->{target_price} (Mk {markup})"
                         
                     stats['updated_price'] += 1
                 
