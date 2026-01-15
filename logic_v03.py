@@ -1,16 +1,14 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi, Prezzi e SALE
-Versione CORRETTA (Logica Priorità Basso Costo):
+Versione DEFINITIVA (Logica Centralizzata):
 1. Identifica i prodotti BBR tramite TAGS.
-2. QTA BBR: 1 (se >0) o 0 (se missing).
-3. COSTI: Aggiorna solo se il fornitore ha un costo valido.
-4. MARKUP LOGIC (Priorità):
-   - 1°: Se Costo < 10€ -> Markup 2.2 (Indipendente dal brand).
-   - 2°: Se Costo < 20€ -> Markup 1.9 (Indipendente dal brand).
-   - 3°: Se Brand è Valido -> Markup da file.
-   - Altrimenti -> Salta (o default).
-5. CHECK PREZZI: Calcola Target Price e gestisce SALE/CompareAt.
-6. SAFETY CHECK: Prezzo >= CompareAt pulisce SALE.
+2. PRE-ORDER: Rilevamento potenziato.
+3. LOGICA PREZZI UNIFICATA:
+   - Fasce Costo (<10€ -> Mk 2.2, <20€ -> Mk 1.9).
+   - Brand Markup (da file).
+   - Arrotondamento .90.
+4. GESTIONE SALE: CompareAt e Tags gestiti automaticamente.
+5. SAFETY CHECK: Prezzo >= CompareAt pulisce SALE.
 """
 
 import pandas as pd
@@ -185,48 +183,61 @@ def get_markup_for_brand(tags, brand_name, markup_dict):
             if norm in markup_dict: return markup_dict[norm]
     return markup_dict.get('DEFAULT', 1.50)
 
-def determine_markup_logic(current_cost, tags, supplier_brand, markup_rules, valid_trademarks_normalized):
+# ==========================================
+# HELPER CENTRALE CALCOLO PREZZI
+# ==========================================
+def calculate_target_price_and_markup(cost, tags, supplier_brand, markup_rules, valid_trademarks_normalized):
     """
-    Logica centralizzata per determinare il markup corretto.
-    Priorità: Costo Basso > Costo Medio > Brand Valido.
-    Restituisce (markup_da_usare, motivo_stringa) o (None, None) se non applicabile.
+    Logica UNICA per determinare markup e prezzo target.
+    Usata sia da V03 che da Markup Only per garantire coerenza totale.
     """
+    markup = 0.0
+    reason = ""
     
-    # 1. Regola Costo < 10 (Priorità Assoluta)
-    if current_cost < COST_THRESHOLD_LOW:
-        return MARKUP_LOW, "Low Cost < 10"
-        
-    # 2. Regola Costo < 20 (Priorità Secondaria)
-    if current_cost < COST_THRESHOLD_MID:
-        return MARKUP_MID, "Mid Cost < 20"
-        
-    # 3. Regola Brand Valido (Se costo >= 20)
-    # Dobbiamo verificare se il brand è valido
-    is_valid_brand = False
+    # 1. Fascia Bassa (< 10)
+    if cost < COST_THRESHOLD_LOW:
+        markup = MARKUP_LOW
+        reason = "<10"
     
-    # Se abbiamo un brand fornitore esplicito (da MCWS/BBR)
-    if supplier_brand:
-        # Assumiamo che se viene da un fornitore filtrato, è valido, 
-        # oppure controlliamo di nuovo contro la lista normalized se vogliamo essere restrittivi.
-        # Qui usiamo la logica: se ho trovato il markup nel file markup, è valido.
-        norm_brand = normalize_string(supplier_brand)
-        if norm_brand in markup_rules:
-            is_valid_brand = True
-            
-    # Se non basta, controlliamo i tag
-    if not is_valid_brand and pd.notna(tags):
-        for tag in str(tags).split(','):
-            norm = normalize_string(tag)
-            clean = norm.replace('BRAND', '')
-            if norm in valid_trademarks_normalized or clean in valid_trademarks_normalized:
-                is_valid_brand = True
-                break
-    
-    if is_valid_brand:
-        markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
-        return markup, "Brand Rule"
+    # 2. Fascia Media (< 20)
+    elif cost < COST_THRESHOLD_MID:
+        markup = MARKUP_MID
+        reason = "<20"
         
-    return None, None # Nessuna regola applicabile
+    # 3. Fascia Brand (Solo se > 20)
+    else:
+        # Verifica se il brand è valido
+        is_valid = False
+        
+        # Se c'è un brand fornitore esplicito (da stocklist)
+        if supplier_brand:
+            is_valid = True # Assumiamo valido se viene da logica stocklist filtrata
+        
+        # Altrimenti controlla i tag (per Markup Only o BBR)
+        if not is_valid and pd.notna(tags):
+            for tag in str(tags).split(','):
+                norm = normalize_string(tag)
+                clean = norm.replace('BRAND', '')
+                if norm in valid_trademarks_normalized or clean in valid_trademarks_normalized:
+                    is_valid = True
+                    break
+        
+        if is_valid:
+            markup = get_markup_for_brand(tags, supplier_brand, markup_rules)
+            reason = "Brand"
+        else:
+            # Se brand non valido e costo > 20, usiamo default o non aggiorniamo?
+            # Se vogliamo forzare l'aggiornamento sempre:
+            markup = 1.50 
+            reason = "Default"
+
+    # Calcolo Prezzo
+    if markup > 0:
+        raw_price = cost * markup
+        target_price = round_price_to_90(raw_price)
+        return target_price, markup, reason
+    
+    return 0.0, 0.0, "Skip"
 
 # ==========================================
 # LOGICA PRINCIPALE (V03 - SYNC INVENTORY)
@@ -346,20 +357,15 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                         stats['updated_qty'] += 1
 
             # --- 2. GESTIONE PREZZI (CHECK UNIVERSALE) ---
-            # Si applica se abbiamo trovato fornitore (prezzo confermato) OPPURE
-            # se stiamo solo sistemando i prezzi in base al costo attuale valido (>0)
             
-            # Nota: Nel sync normale, richiediamo 'found_supplier' per toccare i prezzi
-            # per evitare di toccare articoli manuali non mappati.
             if found_supplier and new_cost > 0:
                 
-                # Determina Markup (Costo Basso > Brand)
-                markup, reason = determine_markup_logic(new_cost, tags, supplier_brand, markup_rules, valid_trademarks_normalized)
+                # Usa Helper Centralizzato
+                target_price, markup, reason = calculate_target_price_and_markup(
+                    new_cost, tags, supplier_brand, markup_rules, valid_trademarks_normalized
+                )
                 
-                if markup:
-                    raw_price = new_cost * markup
-                    target_price = round_price_to_90(raw_price)
-                    
+                if target_price > 0:
                     # LOGICA SALE / UP
                     if target_price < current_price:
                         if abs(target_price - current_price) > 0.01:
@@ -401,7 +407,6 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             stats['errors'] += 1
             logs.append(f"Err Riga {index} SKU {row.get(COL_SKU)}: {e}")
 
-    # Filtro Finale
     if only_changes: final_df = output_df[output_df[COL_CHANGE_LOG] != '']
     else: final_df = output_df
     
@@ -414,10 +419,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
 # FUNZIONE: ADEGUAMENTO MARKUP ONLY
 # ==========================================
 def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
-    """
-    Funzione indipendente per ricalcolare i prezzi.
-    Applica PRIORITARIAMENTE le regole di basso costo.
-    """
+    
     markup_rules = load_markup_rules(markup_file)
     valid_trademarks_normalized = load_trademarks(valid_trademarks_file)
     
@@ -437,21 +439,18 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
             
             current_cost = clean_currency(row.get(COL_COST, 0))
             current_price = clean_currency(row.get(COL_PRICE, 0))
+            current_compare = clean_currency(row.get(COL_COMPARE, 0))
             
             if current_cost <= 0:
                 stats['skipped'] += 1
                 continue
             
-            # --- DETERMINA MARKUP CON LOGICA PRIORITARIA ---
-            # Qui non abbiamo un supplier_brand esplicito (non stiamo guardando stocklist),
-            # quindi passiamo None e ci basiamo su Costo o Tags.
-            markup, reason = determine_markup_logic(current_cost, tags, None, markup_rules, valid_trademarks_normalized)
+            # USA HELPER CENTRALIZZATO (Stessa logica V03)
+            target_price, markup, reason = calculate_target_price_and_markup(
+                current_cost, tags, None, markup_rules, valid_trademarks_normalized
+            )
             
-            if markup:
-                raw_price = current_cost * markup
-                target_price = round_price_to_90(raw_price)
-                
-                # Check Universale Prezzi
+            if target_price > 0:
                 if target_price != current_price:
                     
                     if target_price < current_price:
@@ -459,19 +458,19 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
                         output_df.at[index, COL_PRICE] = target_price
                         new_tags = add_sale_tag(tags)
                         output_df.at[index, COL_TAGS] = new_tags
-                        output_df.at[index, COL_CHANGE_LOG] = f"MARKUP SALE: {current_price}->{target_price} ({reason})"
+                        output_df.at[index, COL_CHANGE_LOG] = f"MK SALE: {current_price}->{target_price} ({reason})"
                     else:
                         output_df.at[index, COL_COMPARE] = ""
                         output_df.at[index, COL_PRICE] = target_price
                         new_tags = remove_sale_tag(tags)
                         output_df.at[index, COL_TAGS] = new_tags
-                        output_df.at[index, COL_CHANGE_LOG] = f"MARKUP UP: {current_price}->{target_price} ({reason})"
+                        output_df.at[index, COL_CHANGE_LOG] = f"MK UP: {current_price}->{target_price} ({reason})"
                         
                     stats['updated_price'] += 1
                 else:
                     output_df.at[index, COL_CHANGE_LOG] = "OK"
                 
-                # Safety Check
+                # SAFETY CHECK
                 check_price = output_df.at[index, COL_PRICE]
                 check_compare = clean_currency(output_df.at[index, COL_COMPARE])
                 
@@ -479,12 +478,11 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
                     output_df.at[index, COL_COMPARE] = ""
                     current_tags_final = output_df.at[index, COL_TAGS]
                     output_df.at[index, COL_TAGS] = remove_sale_tag(current_tags_final)
-                    
             else:
                 stats['skipped'] += 1
                 
         except Exception as e:
             stats['errors'] += 1
-            logs.append(f"Errore Markup Riga {index}: {e}")
+            logs.append(f"Err Markup Riga {index}: {e}")
             
     return output_df, stats, logs
