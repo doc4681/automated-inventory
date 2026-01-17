@@ -2,7 +2,7 @@
 logic.py - Logica Originale (Legacy)
 Aggiornata:
 1. Legge i Trademark da file esterno.
-2. PROTEZIONE PRE-ORDER: Se nei tag c'è "PRE-ORDER", la quantità non viene modificata (non viene messo a 0).
+2. PROTEZIONE PRE-ORDER: Se nei tag c'è "PRE-ORDER", la quantità non viene modificata.
 """
 
 import pandas as pd
@@ -16,7 +16,7 @@ from collections import defaultdict
 # --- COLONNE ATTESE NEI FILE ---
 COL_SHOPIFY_SKU = 'Variant SKU'
 COL_SHOPIFY_QTY = 'Variant Inventory Qty'
-COL_SHOPIFY_TAGS = 'Tags'  # Colonna Tags necessaria per il controllo Pre-Order
+COL_SHOPIFY_TAGS = 'Tags'  # Necessario per il check Pre-Order
 
 COL_MCWS_OUR_CODE = 'Our Code'
 COL_MCWS_CODE = 'Code'
@@ -138,17 +138,16 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file):
         tags_upper = tags.upper()
         norm_tags = normalize_string(tags)
         
+        # Controlla tutte le varianti possibili
         is_preorder = (
             'PRE-ORDER' in tags_upper or 
             'PRE ORDER' in tags_upper or 
             'PREORDER' in norm_tags
         )
         
-        # Se è un pre-order, SALTA qualsiasi logica di quantità.
-        # Non aggiungendo la riga a 'rows_output', il valore su Shopify resta invariato.
+        # Se è un pre-order, SALTA la riga.
+        # Non aggiungendola a 'rows_output', Shopify non riceverà aggiornamenti per questo SKU.
         if is_preorder:
-            # Opzionale: loggare che è stato saltato
-            # log_messages.append(f"[{sku_clean}] PRE-ORDER rilevato -> SKIPPED")
             continue
 
         # Get current Shopify Qty
