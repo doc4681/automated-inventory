@@ -1,6 +1,8 @@
 """
 logic.py - Logica Originale (Legacy)
-Aggiornata per leggere i Trademark da file esterno.
+Aggiornata:
+1. Legge i Trademark da file esterno.
+2. PROTEZIONE PRE-ORDER: Se nei tag c'è "PRE-ORDER", la quantità non viene modificata (non viene messo a 0).
 """
 
 import pandas as pd
@@ -14,6 +16,7 @@ from collections import defaultdict
 # --- COLONNE ATTESE NEI FILE ---
 COL_SHOPIFY_SKU = 'Variant SKU'
 COL_SHOPIFY_QTY = 'Variant Inventory Qty'
+COL_SHOPIFY_TAGS = 'Tags'  # Colonna Tags necessaria per il controllo Pre-Order
 
 COL_MCWS_OUR_CODE = 'Our Code'
 COL_MCWS_CODE = 'Code'
@@ -30,6 +33,15 @@ def clean_code(code):
     if pd.isna(code):
         return ""
     return str(code).strip()
+
+def normalize_string(s):
+    """
+    Rimuove spazi, trattini e caratteri speciali per confronto robusto.
+    Es. "PRE-ORDER" -> "PREORDER"
+    """
+    if pd.isna(s):
+        return ""
+    return re.sub(r'[^A-Z0-9]', '', str(s).upper())
 
 def load_trademarks(file_obj):
     """Carica la lista dei marchi validi dal file."""
@@ -51,76 +63,66 @@ def load_trademarks(file_obj):
         print(f"Errore caricamento trademarks: {e}")
     return trademarks
 
-def process_inventory(df_shopify, df_mcws, df_bbr, valid_trademarks_file=None):
+def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file):
     """
-    Processa l'inventario confrontando Shopify con MCWS e BBR.
-    Restituisce un DataFrame con le modifiche da apportare.
+    Logica originale:
+    1. Filtra MCWS per marchi validi.
+    2. Crea un set di SKU disponibili (MCWS + BBR).
+    3. Confronta con Shopify.
+    4. PRE-ORDER: Se rilevato, ignora la riga (non cambia Qty).
+    5. Genera file con SOLO le righe da aggiornare (0->1 o 1->0).
     """
     
-    # 1. Carica lista marchi validi
-    valid_trademarks = set()
-    if valid_trademarks_file:
-        valid_trademarks = load_trademarks(valid_trademarks_file)
+    # 1. Carica Trademarks
+    valid_trademarks = load_trademarks(trademarks_file)
     
-    # Se la lista è vuota (errore o file mancante), logga un warning ma procedi (o blocca se preferisci)
-    # Qui assumiamo che se vuota, non filtra nulla (o filtra tutto? Meglio filtrare tutto per sicurezza)
-    # Se vuoi che senza file accetti tutto, cambia logica. Qui manteniamo comportamento restrittivo.
-    
-    # 2. Creazione Dizionario Disponibilità (Set di SKU disponibili)
+    # 2. Crea Set di SKU Disponibili (Whitelist)
     available_skus = set()
-    duplicate_report = []
     
-    # A) Process BBR (Sempre validi)
-    if not df_bbr.empty:
-        df_bbr.columns = [c.strip() for c in df_bbr.columns]
-        for _, row in df_bbr.iterrows():
-            sku = clean_code(row.get(COL_BBR_SKU, ''))
-            qty = pd.to_numeric(row.get(COL_BBR_QTY, 0), errors='coerce')
-            if pd.isna(qty): qty = 0
-            
-            if sku and qty > 0:
-                available_skus.add(sku)
+    # --- Processa MCWS ---
+    # Normalizza colonne rimuovendo spazi e apici
+    df_mcws.columns = [c.strip().replace('"', '') for c in df_mcws.columns]
+    
+    duplicates = []
+    seen_mcws = set()
 
-    # B) Process MCWS (Filtrati per Trademark)
-    mcws_codes_seen = set()
-    
-    if not df_mcws.empty:
-        # Pulisci nomi colonne
-        df_mcws.columns = [c.strip().replace('"', '') for c in df_mcws.columns]
+    for _, row in df_mcws.iterrows():
+        tm = str(row.get(COL_MCWS_TRADEMARK, '')).strip().upper()
         
-        for _, row in df_mcws.iterrows():
-            # Filtro Trademark
-            trademark = str(row.get(COL_MCWS_TRADEMARK, '')).strip().upper()
+        # Filtro per Trademark
+        if valid_trademarks and tm not in valid_trademarks:
+            continue
             
-            # SE ABBIAMO UNA LISTA E IL MARCHIO NON C'È, SALTA
-            if valid_trademarks and trademark not in valid_trademarks:
-                continue
-                
-            code = clean_code(row.get(COL_MCWS_CODE, ''))
+        code = clean_code(row.get(COL_MCWS_CODE, ''))
+        
+        if code:
+            if code in seen_mcws:
+                duplicates.append({'SKU': code, 'Brand': tm, 'List': 'MCWS'})
+            seen_mcws.add(code)
+            available_skus.add(code)
+
+    # --- Processa BBR ---
+    # Normalizza colonne
+    df_bbr.columns = [c.strip() for c in df_bbr.columns]
+    
+    for _, row in df_bbr.iterrows():
+        sku = clean_code(row.get(COL_BBR_SKU, ''))
+        try:
+            qty = float(row.get(COL_BBR_QTY, 0))
+        except:
+            qty = 0
             
-            if code:
-                # Check duplicati
-                if code in mcws_codes_seen:
-                    duplicate_report.append({
-                        'Code': code,
-                        'Trademark': trademark,
-                        'Note': 'Duplicato nel file MCWS'
-                    })
-                mcws_codes_seen.add(code)
-                
-                # In Stocklist MCWS = Disponibile
-                available_skus.add(code)
+        if sku and qty > 0:
+            available_skus.add(sku)
 
     # 3. Confronto con Shopify
     rows_output = []
     stats = {'total': 0, 'updates_1': 0, 'updates_0': 0}
-    log_messages = []
-    
     processed_skus = set()
-    
-    for idx, row in df_shopify.iterrows():
+    log_messages = []
+
+    for index, row in df_shopify.iterrows():
         stats['total'] += 1
-        
         raw_sku = row.get(COL_SHOPIFY_SKU, '')
         sku_clean = clean_code(raw_sku)
         
@@ -131,6 +133,24 @@ def process_inventory(df_shopify, df_mcws, df_bbr, valid_trademarks_file=None):
             continue
         processed_skus.add(sku_clean)
         
+        # --- CHECK PRE-ORDER (NUOVO) ---
+        tags = str(row.get(COL_SHOPIFY_TAGS, ''))
+        tags_upper = tags.upper()
+        norm_tags = normalize_string(tags)
+        
+        is_preorder = (
+            'PRE-ORDER' in tags_upper or 
+            'PRE ORDER' in tags_upper or 
+            'PREORDER' in norm_tags
+        )
+        
+        # Se è un pre-order, SALTA qualsiasi logica di quantità.
+        # Non aggiungendo la riga a 'rows_output', il valore su Shopify resta invariato.
+        if is_preorder:
+            # Opzionale: loggare che è stato saltato
+            # log_messages.append(f"[{sku_clean}] PRE-ORDER rilevato -> SKIPPED")
+            continue
+
         # Get current Shopify Qty
         try:
             current_val = float(row.get(COL_SHOPIFY_QTY, 0))
@@ -161,11 +181,11 @@ def process_inventory(df_shopify, df_mcws, df_bbr, valid_trademarks_file=None):
             out_row['Change Log'] = change_log
             rows_output.append(out_row)
             log_messages.append(f"[{sku_clean}] {change_log}")
-    
-    # Creazione DataFrame Output
+
+    # Crea DataFrame Output
     if rows_output:
-        df_output = pd.DataFrame(rows_output)
+        result_df = pd.DataFrame(rows_output)
     else:
-        df_output = pd.DataFrame(columns=df_shopify.columns)
-        
-    return df_output, stats, duplicate_report, log_messages
+        result_df = pd.DataFrame() # Vuoto
+
+    return result_df, stats, duplicates, log_messages
