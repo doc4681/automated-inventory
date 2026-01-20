@@ -98,6 +98,7 @@ with col_upload:
     st.markdown('<div class="sub-header">1. Carica i File</div>', unsafe_allow_html=True)
     files_loaded = False
     OUTPUT_PREFIX = "UPDATE"
+    use_bbr_file = True # Default
 
     if process_mode == MODE_ORIGINAL:
         st.info("📄 **Formato Originale**: Carica i 3 file separati")
@@ -108,11 +109,22 @@ with col_upload:
         OUTPUT_PREFIX = OUTPUT_PREFIX_LEGACY
         
     elif process_mode == MODE_V03:
-        st.info("📦 **Formato V03**: Carica i 3 file (Products.csv ha 12 colonne)")
+        st.info("📦 **Formato V03**: Carica i file richiesti (Products.csv ha 12 colonne)")
+        
+        # --- NUOVO SELETTORE BBR ---
+        use_bbr_file = st.checkbox("Abilita controllo specifico BBR (Richiede file Export)", value=True)
+        # ---------------------------
+        
         file_shopify = st.file_uploader("📁 **Products.csv** (12 colonne)", type=["csv"], key="file_shopify")
         file_mcws = st.file_uploader("📁 **MCWS_stocklist.csv**", type=["csv"], key="file_mcws")
-        file_bbr = st.file_uploader("📁 **BBR_export**", type=["csv", "xls", "xlsx"], key="file_bbr")
-        if file_shopify and file_mcws and file_bbr: files_loaded = True
+        
+        if use_bbr_file:
+            file_bbr = st.file_uploader("📁 **BBR_export**", type=["csv", "xls", "xlsx"], key="file_bbr")
+            if file_shopify and file_mcws and file_bbr: files_loaded = True
+        else:
+            file_bbr = None
+            if file_shopify and file_mcws: files_loaded = True
+            
         OUTPUT_PREFIX = OUTPUT_PREFIX_V03
         
     elif process_mode == MODE_MARKUP:
@@ -149,7 +161,7 @@ with col_info:
     if process_mode == MODE_ORIGINAL:
         st.markdown("""<div class="info-box"><b>Formato Originale:</b><br>Sync solo quantità (3 file).</div>""", unsafe_allow_html=True)
     elif process_mode == MODE_V03:
-        st.markdown("""<div class="info-box"><b>Formato V03:</b><br>Sync Quantità + Costi + Prezzi dinamici.<br>Supporta output parziale o intero.</div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="info-box"><b>Formato V03:</b><br>Sync Quantità + Costi + Prezzi dinamici.<br>Supporta output parziale o intero.<br><b>Check BBR:</b> {'ATTIVO' if use_bbr_file else 'DISATTIVATO'}</div>""", unsafe_allow_html=True)
     elif process_mode == MODE_MARKUP:
         st.markdown("""<div class="info-box"><b>Adeguamento Markup:</b><br>Ricalcola TUTTI i prezzi basandosi su Costo * Markup (Brand Validi).<br>Output: File intero.</div>""", unsafe_allow_html=True)
 
@@ -178,11 +190,18 @@ if files_loaded:
                 
                 elif process_mode == MODE_V03:
                     df_mcws_loaded = load_dataframe(file_mcws)
-                    df_bbr_loaded = load_dataframe(file_bbr)
+                    
+                    # Gestione caricamento BBR condizionale
+                    if use_bbr_file and file_bbr:
+                        df_bbr_loaded = load_dataframe(file_bbr)
+                    else:
+                        df_bbr_loaded = pd.DataFrame()
+                        
                     with open('Vroomi_Markup.txt', 'r', encoding='utf-8') as f_markup:
                         result_df, stats, duplicate_report, log_messages = process_inventory_v03(
                             df_shopify_loaded, df_mcws_loaded, df_bbr_loaded, f_markup, f_trademarks,
-                            include_change_log=include_log, only_changes=only_changes_param
+                            include_change_log=include_log, only_changes=only_changes_param,
+                            enable_bbr=use_bbr_file # Parametro nuovo
                         )
                     stats_for_legacy = stats['inventory']
                     show_legacy_stats = True
@@ -246,4 +265,4 @@ else:
     st.info("👆 Carica i file necessari nel riquadro '1. Carica i File' per abilitare il pulsante di avvio.")
 
 st.markdown("---")
-st.caption("🔧 Inventory Sync WebApp v3.3 | V03 + Markup Priority + Sale Management")
+st.caption("🔧 Inventory Sync WebApp v3.4 | V03 (BBR Toggle) + Markup Priority")
