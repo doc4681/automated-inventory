@@ -3,6 +3,7 @@ logic.py - Logica Originale (Legacy)
 Aggiornata:
 1. Legge i Trademark da file esterno.
 2. PROTEZIONE PRE-ORDER: Se nei tag c'è "PRE-ORDER", la quantità non viene modificata.
+3. TOGGLE BBR: Se enable_bbr=False, ignora il file BBR nel calcolo dello stock.
 """
 
 import pandas as pd
@@ -63,11 +64,11 @@ def load_trademarks(file_obj):
         print(f"Errore caricamento trademarks: {e}")
     return trademarks
 
-def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file):
+def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file, enable_bbr=True):
     """
     Logica originale:
     1. Filtra MCWS per marchi validi.
-    2. Crea un set di SKU disponibili (MCWS + BBR).
+    2. Crea un set di SKU disponibili (MCWS + BBR se abilitato).
     3. Confronta con Shopify.
     4. PRE-ORDER: Se rilevato, ignora la riga (non cambia Qty).
     5. Genera file con SOLO le righe da aggiornare (0->1 o 1->0).
@@ -81,8 +82,9 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file):
     
     # --- Processa MCWS ---
     # Normalizza colonne rimuovendo spazi e apici
-    df_mcws.columns = [c.strip().replace('"', '') for c in df_mcws.columns]
-    
+    if not df_mcws.empty:
+        df_mcws.columns = [c.strip().replace('"', '') for c in df_mcws.columns]
+        
     duplicates = []
     seen_mcws = set()
 
@@ -101,19 +103,20 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file):
             seen_mcws.add(code)
             available_skus.add(code)
 
-    # --- Processa BBR ---
-    # Normalizza colonne
-    df_bbr.columns = [c.strip() for c in df_bbr.columns]
-    
-    for _, row in df_bbr.iterrows():
-        sku = clean_code(row.get(COL_BBR_SKU, ''))
-        try:
-            qty = float(row.get(COL_BBR_QTY, 0))
-        except:
-            qty = 0
-            
-        if sku and qty > 0:
-            available_skus.add(sku)
+    # --- Processa BBR (Solo se abilitato) ---
+    if enable_bbr and not df_bbr.empty:
+        # Normalizza colonne
+        df_bbr.columns = [c.strip() for c in df_bbr.columns]
+        
+        for _, row in df_bbr.iterrows():
+            sku = clean_code(row.get(COL_BBR_SKU, ''))
+            try:
+                qty = float(row.get(COL_BBR_QTY, 0))
+            except:
+                qty = 0
+                
+            if sku and qty > 0:
+                available_skus.add(sku)
 
     # 3. Confronto con Shopify
     rows_output = []
