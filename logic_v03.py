@@ -1,12 +1,13 @@
 """
 logic_v03.py - Inventory Sync con Gestione Dinamica Costi, Prezzi e SALE
-Versione DEFINITIVA (Fix Pre-Order Detection):
-1. Identifica i prodotti BBR tramite TAGS.
+Versione DEFINITIVA (Fix Pre-Order Detection + BBR Toggle):
+1. Identifica i prodotti BBR tramite TAGS o File.
 2. PRE-ORDER: Rilevamento potenziato (PRE-ORDER, PRE ORDER, PREORDER).
    - Se rilevato: QTA BLOCCATA (non viene mai modificata).
 3. COSTI: Aggiorna solo se il fornitore ha un costo valido.
 4. PREZZI & SALE: Logica dinamica (Check Universale) + Safety Check Shopify.
 5. STOCK: Aggiorna BBR/MCWS solo se non è pre-order.
+6. TOGGLE BBR: Se disabilitato, cerca tutto in MCWS.
 """
 
 import pandas as pd
@@ -216,15 +217,20 @@ def get_markup_for_brand(tags, brand_name, markup_dict):
 # ==========================================
 # LOGICA PRINCIPALE (V03 - SYNC INVENTORY)
 # ==========================================
-def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file, include_change_log=True, only_changes=True):
+def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file, include_change_log=True, only_changes=True, enable_bbr=True):
+    """
+    Parametro 'enable_bbr':
+    - True: Cerca prima nel file BBR, poi applica logica Orfani BBR.
+    - False: Ignora file BBR e logica specifica BBR. Cerca tutto in MCWS.
+    """
     
     # --- 1. PREPARAZIONE DATI ---
     markup_rules = load_markup_rules(markup_file)
     valid_trademarks_normalized = load_trademarks(valid_trademarks_file)
     
-    # BBR Lookup
+    # BBR Lookup (Solo se abilitato)
     bbr_lookup = {}
-    if not df_bbr.empty:
+    if enable_bbr and not df_bbr.empty:
         df_bbr.columns = [c.strip() for c in df_bbr.columns]
         for _, row in df_bbr.iterrows():
             sku = str(row.get(COL_BBR_SKU, '')).strip()
@@ -304,13 +310,13 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             
             # --- FASE 1: IDENTIFICAZIONE FORNITORE E AGG. DATI GREZZI ---
             
-            # A. CHECK BBR
-            if sku in bbr_lookup:
+            # A. CHECK BBR (Eseguito solo se enable_bbr è True)
+            if enable_bbr and sku in bbr_lookup:
                 found_supplier = True
                 supplier_data = bbr_lookup[sku]
                 supplier_brand = "BBR"
                 
-                # Costo BBR (Sempre aggiornabile, anche se Pre-order)
+                # Costo BBR
                 s_cost = supplier_data['cost']
                 if s_cost > 0:
                     new_cost = s_cost
@@ -326,15 +332,15 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                         changes.append(f"QTY(BBR-Force): {current_qty}->{new_qty}")
                         stats['updated_qty'] += 1
 
-            # B. CHECK BBR ORFANO (Tag BBR ma non in listino)
-            elif 'BBR' in norm_tags:
+            # B. CHECK BBR ORFANO (Solo se enable_bbr è True)
+            elif enable_bbr and 'BBR' in norm_tags:
                 # Stock (BLOCCATO SE PRE-ORDER)
                 if not is_preorder and current_qty > 0:
                     new_qty = 0
                     changes.append(f"QTY(BBR-Missing): {current_qty}->0")
                     stats['updated_qty'] += 1
 
-            # C. CHECK MCWS
+            # C. CHECK MCWS (Fallback per tutto il resto, incluso BBR se disabilitato)
             else:
                 match_obj = mcws_lookup.get(sku)
                 
@@ -360,7 +366,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                             changes.append("QTY(MCWS): 0->1")
                             stats['updated_qty'] += 1
                             
-                # C2. NON TROVATO IN MCWS (e non è BBR) -> STOCK A 0
+                # C2. NON TROVATO IN MCWS
                 else:
                     # (BLOCCATO SE PRE-ORDER)
                     if not is_preorder and current_qty > 0:
@@ -369,7 +375,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                         stats['updated_qty'] += 1
 
             # --- FASE 2: GESTIONE PREZZI E SALE (CHECK UNIVERSALE) ---
-            # Questa fase viene eseguita ANCHE se è un pre-order (i prezzi devono essere giusti)
+            # Questa fase viene eseguita ANCHE se è un pre-order
             
             if found_supplier and new_cost > 0:
                 
