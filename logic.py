@@ -178,7 +178,7 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file, enable_bbr=T
         
         if new_qty is not None:
             out_row = row.copy()
-            out_row[COL_SHOPIFY_QTY] = new_qty
+            out_row[COL_SHOPIFY_QTY] = str(new_qty)
             # Aggiungi colonna Change Log se non esiste, o appendi
             out_row['Change Log'] = change_log
             rows_output.append(out_row)
