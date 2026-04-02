@@ -716,7 +716,7 @@ def process_inventory_v02(
         
         if new_qty is not None:
             out_row = row.copy()
-            out_row[COL_SHOPIFY_QTY] = new_qty
+            out_row[COL_SHOPIFY_QTY] = str(new_qty)
             rows_output.append(out_row)
         else:
             # Aggiungi anche le righe senza modifiche all'inventario
