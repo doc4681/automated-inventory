@@ -394,11 +394,11 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                      changes.append(f"FIX: Price({new_price})>=Compare({val_compare}) -> Sale Removed")
 
             # --- SALVATAGGIO ---
-            output_df.at[index, COL_QTY] = new_qty
-            output_df.at[index, COL_COST] = new_cost
-            output_df.at[index, COL_PRICE] = new_price
-            output_df.at[index, COL_COMPARE] = new_compare
-            output_df.at[index, COL_TAGS] = new_tags
+            output_df.at[index, COL_QTY]     = str(new_qty)
+            output_df.at[index, COL_COST]    = str(new_cost)
+            output_df.at[index, COL_PRICE]   = str(new_price)
+            output_df.at[index, COL_COMPARE] = str(new_compare) if new_compare != "" else ""
+            output_df.at[index, COL_TAGS]    = new_tags
             
             if new_qty > 0 and current_qty == 0: stats['inventory']['updates_1'] += 1
             elif new_qty == 0 and current_qty > 0: stats['inventory']['updates_0'] += 1
@@ -457,14 +457,14 @@ def process_markup_only(df_shopify, markup_file, valid_trademarks_file):
                 if target_price != current_price:
                     
                     if target_price < current_price:
-                        output_df.at[index, COL_COMPARE] = current_price
-                        output_df.at[index, COL_PRICE] = target_price
+                        output_df.at[index, COL_COMPARE] = str(current_price)
+                        output_df.at[index, COL_PRICE]   = str(target_price)
                         new_tags = add_sale_tag(tags)
                         output_df.at[index, COL_TAGS] = new_tags
                         output_df.at[index, COL_CHANGE_LOG] = f"MK SALE: {current_price}->{target_price} ({reason})"
                     else:
-                        output_df.at[index, COL_COMPARE] = ""
-                        output_df.at[index, COL_PRICE] = target_price
+                        output_df.at[index, COL_COMPARE] = str(current_price)
+                        output_df.at[index, COL_PRICE]   = str(target_price)ce
                         new_tags = remove_sale_tag(tags)
                         output_df.at[index, COL_TAGS] = new_tags
                         output_df.at[index, COL_CHANGE_LOG] = f"MK UP: {current_price}->{target_price} ({reason})"
