@@ -176,13 +176,11 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file, enable_bbr=T
             stats['updates_0'] += 1
             change_log = "QTY: 1->0 (DISATTIVATO)"
         
-        if new_qty is not None:
-            out_row = row.copy()
-            out_row[COL_SHOPIFY_QTY] = str(new_qty)
-            # Aggiungi colonna Change Log se non esiste, o appendi
-            out_row['Change Log'] = change_log
-            rows_output.append(out_row)
-            log_messages.append(f"[{sku_clean}] {change_log}")
+       if new_qty is not None:
+           out_row = row.to_dict()
+           out_row[COL_SHOPIFY_QTY] = str(new_qty)
+           out_row['Change Log'] = change_log
+           rows_output.append(out_row)
 
     # Crea DataFrame Output
     if rows_output:
