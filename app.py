@@ -49,12 +49,12 @@ def load_dataframe(uploaded_file):
     try:
         if ext == '.csv':
             try:
-                return pd.read_csv(uploaded_file, dtype=str)
+                return pd.read_csv(uploaded_file, dtype=object)   # ← era dtype=str
             except:
                 uploaded_file.seek(0)
-                return pd.read_csv(uploaded_file, dtype=str, sep=';')
+                return pd.read_csv(uploaded_file, dtype=object, sep=';')  # ← era dtype=str
         elif ext in ['.xls', '.xlsx']:
-            return pd.read_excel(uploaded_file, dtype=str)
+            return pd.read_excel(uploaded_file, dtype=object)     # ← era dtype=str
         else:
             raise ValueError(f"Formato file non supportato: {ext}")
     except Exception as e:
