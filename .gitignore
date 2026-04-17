@@ -1,0 +1,23 @@
+# Credenziali e variabili d'ambiente
+.env
+.env.*
+*.env
+
+# Claude Code (può contenere credenziali nei permessi locali)
+.claude/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Cookies salvati dal downloader (contengono session token)
+downloader/mcws_cookies.json
+
+# Log temporanei
+scraper/scraper_run.log
