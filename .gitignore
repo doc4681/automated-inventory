@@ -2,9 +2,13 @@
 .env
 .env.*
 *.env
+.env.vroomi
 
 # Claude Code (può contenere credenziali nei permessi locali)
 .claude/
+
+# GitHub Actions (non usiamo CI — tutto gira in locale)
+.github/
 
 # macOS
 .DS_Store
@@ -21,3 +25,4 @@ downloader/mcws_cookies.json
 
 # Log temporanei
 scraper/scraper_run.log
+run_local.log

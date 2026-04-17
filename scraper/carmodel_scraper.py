@@ -1,28 +1,25 @@
 """
 carmodel_scraper.py
 Scrapes product data from https://www.carmodel.com (EN, no /it/).
-Credentials ONLY from environment variables:
-  os.environ['MCWS_USERNAME']
-  os.environ['MCWS_PASSWORD']
+Usa undetected-chromedriver per bypassare Cloudflare.
 
 Usage:
-  python scraper/carmodel_scraper.py --test   # BURAGO only, prints first 3 rows
-  python scraper/carmodel_scraper.py          # all brands in Valid_Trademarks.txt
+  python scraper/carmodel_scraper.py --test   # BURAGO only, stampa prime 3 righe
+  python scraper/carmodel_scraper.py          # tutti i brand in Valid_Trademarks.txt
 """
 
-import os
 import re
 import time
 import csv
 import argparse
 from pathlib import Path
 
-import cloudscraper
+import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.carmodel.com"
 OUTPUT_FILE = Path(__file__).parent / "carmodel_scraped.csv"
-SLEEP = 1.5
+SLEEP = 2
 
 FIELDNAMES = [
     "codice_produttore",
@@ -51,26 +48,34 @@ def load_trademarks(path: Path) -> list[str]:
     return marks
 
 
-def make_session() -> cloudscraper.CloudScraper:
-    """Create a cloudscraper session; optionally log in with env-var credentials."""
-    s = cloudscraper.create_scraper()
-    username = os.environ.get("MCWS_USERNAME", "")
-    password = os.environ.get("MCWS_PASSWORD", "")
-    if username and password:
-        r = s.post(f"{BASE_URL}/signin",
-                   data={"username": username, "password": password},
-                   timeout=20)
-        if "/signin" in r.url or "/login" in r.url:
-            print("WARNING: login failed — check MCWS_USERNAME / MCWS_PASSWORD")
-        else:
-            print(f"Logged in as {username}")
+def make_driver() -> uc.Chrome:
+    driver = uc.Chrome(headless=False, use_subprocess=True)
+    return driver
+
+
+def get_page_soup(driver: uc.Chrome, url: str) -> BeautifulSoup | None:
+    from selenium.common.exceptions import NoSuchWindowException, WebDriverException
+    try:
+        driver.get(url)
+    except (NoSuchWindowException, WebDriverException) as e:
+        print(f"  ERRORE navigazione ({type(e).__name__}): {url}")
+        return None
+    # Attesa Cloudflare challenge (max 30s)
+    for _ in range(15):
+        time.sleep(2)
+        try:
+            title = driver.title
+        except WebDriverException:
+            return None
+        if "Just a moment" not in title and "Ci siamo quasi" not in title:
+            break
     else:
-        print("No credentials set (MCWS_USERNAME / MCWS_PASSWORD) — proceeding as guest.")
-    return s
+        print(f"  WARNING: CF challenge non risolto per {url}")
+        return None
+    return BeautifulSoup(driver.page_source, "html.parser")
 
 
 def _tooltip(card: BeautifulSoup, title: str) -> str:
-    """Extract text from an extra-info span identified by its tooltip title."""
     span = card.find("span", attrs={"data-bs-title": title})
     if not span:
         return ""
@@ -134,13 +139,11 @@ def last_page_number(soup: BeautifulSoup) -> int:
     pag = soup.find("ul", class_="pagination")
     if not pag:
         return 1
-    # ">>" link points to the last page
     for a in pag.find_all("a", class_="page-link"):
         if ">>" in a.get_text():
             m = re.search(r"page=(\d+)", a.get("href", ""))
             if m:
                 return int(m.group(1))
-    # fallback: highest page= value in any link
     return max(
         (int(m.group(1))
          for a in pag.find_all("a", href=True)
@@ -149,33 +152,34 @@ def last_page_number(soup: BeautifulSoup) -> int:
     )
 
 
-def scrape_trademark(session: cloudscraper.CloudScraper, trademark: str) -> list[dict]:
+def scrape_trademark(driver: uc.Chrome, trademark: str) -> list[dict]:
     slug = trademark.lower().replace(" ", "-")
     base = f"{BASE_URL}/trademark/{slug}"
     products = []
 
-    r = session.get(base, timeout=20)
-    if r.status_code == 404:
-        print(f"  {trademark}: not found, skipping.")
-        return []
-    if r.status_code != 200:
-        print(f"  {trademark}: HTTP {r.status_code}, skipping.")
+    soup = get_page_soup(driver, base)
+    if soup is None:
+        print(f"  {trademark}: impossibile caricare pagina 1, skip.")
         return []
 
-    soup = BeautifulSoup(r.text, "html.parser")
+    # Controlla 404 (titolo o assenza di articoli)
+    cards = soup.find_all("article", class_="prod-card")
+    if not cards and soup.find("h1", string=re.compile(r"404|not found", re.I)):
+        print(f"  {trademark}: not found, skipping.")
+        return []
+
     total_pages = last_page_number(soup)
     print(f"  [{trademark}] {total_pages} page(s)")
 
     for page in range(1, total_pages + 1):
         if page > 1:
             time.sleep(SLEEP)
-            r = session.get(f"{base}?page={page}", timeout=20)
-            if r.status_code != 200:
-                print(f"    page {page}: HTTP {r.status_code}, stopping.")
+            soup = get_page_soup(driver, f"{base}?page={page}")
+            if soup is None:
+                print(f"    page {page}: skip.")
                 break
-            soup = BeautifulSoup(r.text, "html.parser")
+            cards = soup.find_all("article", class_="prod-card")
 
-        cards = soup.find_all("article", class_="prod-card")
         page_prods = [p for c in cards if (p := parse_card(c, trademark))]
         products.extend(page_prods)
         print(f"    page {page}/{total_pages}: {len(page_prods)} products (cumulative: {len(products)})")
@@ -185,19 +189,22 @@ def scrape_trademark(session: cloudscraper.CloudScraper, trademark: str) -> list
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test", action="store_true", help="BURAGO only, print first 3 rows")
+    parser.add_argument("--test", action="store_true", help="BURAGO only, stampa prime 3 righe")
     args = parser.parse_args()
 
     trademarks_file = Path(__file__).parent.parent / "Valid_Trademarks.txt"
     trademarks = ["BURAGO"] if args.test else load_trademarks(trademarks_file)
 
-    session = make_session()
+    driver = make_driver()
     all_products = []
 
-    for tm in trademarks:
-        all_products.extend(scrape_trademark(session, tm))
-        if not args.test:
-            time.sleep(SLEEP)
+    try:
+        for tm in trademarks:
+            all_products.extend(scrape_trademark(driver, tm))
+            if not args.test:
+                time.sleep(SLEEP)
+    finally:
+        driver.quit()
 
     with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
