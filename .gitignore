@@ -23,6 +23,11 @@ venv/
 # Cookies salvati dal downloader (contengono session token)
 downloader/mcws_cookies.json
 
+# Output CSV storici con timestamp (restano solo sul Mac, non nel repo)
+scraper/output/
+downloader/output/
+merger/output/
+
 # Log temporanei
 scraper/scraper_run.log
 run_local.log

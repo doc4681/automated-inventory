@@ -26,6 +26,10 @@ echo "╚═══════════════════════�
 echo ""
 
 T_START=$(date +%s)
+export RUN_TIMESTAMP=$(date '+%Y-%m-%d_%H%M')
+
+echo "  Run timestamp: $RUN_TIMESTAMP"
+echo ""
 
 # ── STEP 1: Scraper carmodel.com ─────────────────────────────────────────────
 echo "▶ [1/3] Scraping carmodel.com..."
@@ -46,9 +50,9 @@ echo ""
 T_END=$(date +%s)
 DURATA=$((T_END - T_START))
 
-RIGHE_CARMODEL=$(tail -n +2 scraper/carmodel_scraped.csv | wc -l | tr -d ' ')
-RIGHE_MCWS=$(tail -n +2 downloader/mcws_inventory.csv | wc -l | tr -d ' ')
-RIGHE_MERGED=$(tail -n +2 merger/merged_products.csv | wc -l | tr -d ' ')
+RIGHE_CARMODEL=$(tail -n +2 "scraper/output/carmodel_scraped_${RUN_TIMESTAMP}.csv" 2>/dev/null | wc -l | tr -d ' ')
+RIGHE_MCWS=$(tail -n +2 "downloader/output/mcws_inventory_${RUN_TIMESTAMP}.csv" 2>/dev/null | wc -l | tr -d ' ')
+RIGHE_MERGED=$(tail -n +2 "merger/output/merged_products_${RUN_TIMESTAMP}.csv" 2>/dev/null | wc -l | tr -d ' ')
 
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║                  RIEPILOGO FINALE                    ║"
@@ -58,7 +62,7 @@ printf "║  Prodotti MCWS         : %-28s║\n" "$RIGHE_MCWS"
 printf "║  Match (merged)        : %-28s║\n" "$RIGHE_MERGED"
 printf "║  Durata                : %-25s s ║\n" "$DURATA"
 echo "╠══════════════════════════════════════════════════════╣"
-printf "║  Output: merger/merged_products.csv%-18s║\n" ""
+printf "║  Output: merger/output/merged_products_%-14s║\n" "${RUN_TIMESTAMP}.csv"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
 

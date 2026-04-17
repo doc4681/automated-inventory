@@ -12,6 +12,7 @@ Uso:
 
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 
 import undetected_chromedriver as uc
@@ -22,21 +23,29 @@ from selenium.webdriver.support import expected_conditions as EC
 LOGIN_URL = "https://www.modelcarswholesale.com/it/login"
 DOWNLOAD_URL = "https://www.modelcarswholesale.com/downloadStocklistCsv"
 LOGOUT_URL = "https://www.modelcarswholesale.com/logout"
-OUTPUT_FILE = Path(__file__).parent / "mcws_inventory.csv"
+
+
+def get_output_file() -> Path:
+    ts = os.environ.get("RUN_TIMESTAMP", datetime.now().strftime("%Y-%m-%d_%H%M"))
+    out_dir = Path(__file__).parent / "output"
+    out_dir.mkdir(exist_ok=True)
+    return out_dir / f"mcws_inventory_{ts}.csv"
+
+
+# Chrome scarica nella directory temporanea del downloader (non output/)
+# così wait_for_download trova il file prima del rename
 DOWNLOAD_DIR = Path(__file__).parent.resolve()
 
 
 def wait_for_download(directory: Path, timeout: int = 60) -> Path | None:
-    """Attende che compaia un file .csv scaricato nella directory."""
+    """Attende che compaia un file .csv scaricato nella directory (non in output/)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        files = list(directory.glob("*.csv"))
-        # Ignora file temporanei Chrome (.crdownload)
-        complete = [f for f in files if not f.name.endswith(".crdownload")
-                    and f.name != OUTPUT_FILE.name]
-        if complete:
-            # Prendi il più recente
-            return max(complete, key=lambda f: f.stat().st_mtime)
+        # Solo file nella directory root, non nelle sottocartelle
+        files = [f for f in directory.glob("*.csv")
+                 if not f.name.endswith(".crdownload")]
+        if files:
+            return max(files, key=lambda f: f.stat().st_mtime)
         time.sleep(1)
     return None
 
@@ -44,6 +53,7 @@ def wait_for_download(directory: Path, timeout: int = 60) -> Path | None:
 def main():
     username = os.environ["MCWS_USERNAME"]
     password = os.environ["MCWS_PASSWORD"]
+    output_file = get_output_file()
 
     # Configura Chrome: download automatico nella directory del downloader
     options = uc.ChromeOptions()
@@ -100,14 +110,14 @@ def main():
         # Attendi completamento download
         downloaded = wait_for_download(DOWNLOAD_DIR, timeout=60)
         if downloaded:
-            downloaded.rename(OUTPUT_FILE)
-            print(f"Salvato: {OUTPUT_FILE} ({OUTPUT_FILE.stat().st_size} bytes)")
+            downloaded.rename(output_file)
+            print(f"Salvato: {output_file} ({output_file.stat().st_size} bytes)")
         else:
             # Fallback: il contenuto potrebbe essere inline (non file)
             page_src = driver.page_source
             if "<!DOCTYPE" not in page_src[:100]:
-                OUTPUT_FILE.write_text(page_src, encoding="utf-8")
-                print(f"Salvato (inline): {OUTPUT_FILE}")
+                output_file.write_text(page_src, encoding="utf-8")
+                print(f"Salvato (inline): {output_file}")
             else:
                 raise SystemExit("ERRORE: download non completato")
 
@@ -119,11 +129,9 @@ def main():
         driver.quit()
 
     # Statistiche CSV
-    lines = OUTPUT_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
-    print(f"\nRighe nel CSV: {len(lines)}")
-    print("\nPrime 3 righe:")
-    for line in lines[:3]:
-        print(line)
+    lines = output_file.read_text(encoding="utf-8", errors="replace").splitlines()
+    print(f"\nRighe nel CSV: {len(lines) - 1}")
+    print(f"File: {output_file}")
 
 
 if __name__ == "__main__":

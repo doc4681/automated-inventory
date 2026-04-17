@@ -8,18 +8,26 @@ Usage:
   python scraper/carmodel_scraper.py          # tutti i brand in Valid_Trademarks.txt
 """
 
+import os
 import re
 import time
 import csv
 import argparse
+from datetime import datetime
 from pathlib import Path
 
 import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.carmodel.com"
-OUTPUT_FILE = Path(__file__).parent / "carmodel_scraped.csv"
 SLEEP = 2
+
+
+def get_output_file() -> Path:
+    ts = os.environ.get("RUN_TIMESTAMP", datetime.now().strftime("%Y-%m-%d_%H%M"))
+    out_dir = Path(__file__).parent / "output"
+    out_dir.mkdir(exist_ok=True)
+    return out_dir / f"carmodel_scraped_{ts}.csv"
 
 FIELDNAMES = [
     "codice_produttore",
@@ -206,18 +214,20 @@ def main():
     finally:
         driver.quit()
 
-    with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
+    output_file = get_output_file()
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
         writer.writeheader()
         writer.writerows(all_products)
 
-    print(f"\nDone. {len(all_products)} products → {OUTPUT_FILE}")
+    print(f"\nDone. {len(all_products)} products → {output_file}")
 
     if args.test and all_products:
         print("\nPrime 3 righe:")
         print(",".join(FIELDNAMES))
         for row in all_products[:3]:
             print(",".join(str(row[k]) for k in FIELDNAMES))
+        print(f"\nFile: {output_file}")
 
 
 if __name__ == "__main__":

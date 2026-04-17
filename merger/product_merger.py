@@ -1,17 +1,41 @@
 """
 product_merger.py
-Join tra carmodel_scraped.csv (scraper) e mcws_inventory.csv (downloader).
+Join tra carmodel_scraped_{ts}.csv (scraper) e mcws_inventory_{ts}.csv (downloader).
 Match: codice_produttore (carmodel) == Code (MCWS), normalizzati uppercase senza spazi.
 
-Output: merger/merged_products.csv
+Legge RUN_TIMESTAMP da os.environ (settato da aggiorna_inventario.command).
+Fallback: usa il file più recente nella cartella output/ corrispondente.
+
+Output: merger/output/merged_products_{ts}.csv
 """
 
 import csv
+import os
+from datetime import datetime
 from pathlib import Path
 
-CARMODEL_FILE = Path(__file__).parent.parent / "scraper" / "carmodel_scraped.csv"
-MCWS_FILE = Path(__file__).parent.parent / "downloader" / "mcws_inventory.csv"
-OUTPUT_FILE = Path(__file__).parent / "merged_products.csv"
+
+def resolve_input(output_dir: Path, prefix: str, ts: str) -> Path:
+    """Restituisce il file con timestamp esatto, o il più recente se non trovato."""
+    exact = output_dir / f"{prefix}_{ts}.csv"
+    if exact.exists():
+        return exact
+    # Fallback: file più recente con quel prefisso
+    candidates = sorted(output_dir.glob(f"{prefix}_*.csv"), key=lambda f: f.stat().st_mtime)
+    if candidates:
+        return candidates[-1]
+    raise FileNotFoundError(f"Nessun file {prefix}_*.csv in {output_dir}")
+
+
+def get_paths() -> tuple[Path, Path, Path]:
+    ts = os.environ.get("RUN_TIMESTAMP", datetime.now().strftime("%Y-%m-%d_%H%M"))
+    root = Path(__file__).parent.parent
+    carmodel_file = resolve_input(root / "scraper" / "output", "carmodel_scraped", ts)
+    mcws_file     = resolve_input(root / "downloader" / "output", "mcws_inventory", ts)
+    out_dir = Path(__file__).parent / "output"
+    out_dir.mkdir(exist_ok=True)
+    output_file = out_dir / f"merged_products_{ts}.csv"
+    return carmodel_file, mcws_file, output_file
 
 OUTPUT_FIELDS = [
     "codice_produttore",
@@ -47,14 +71,18 @@ def load_mcws(path: Path) -> dict[str, dict]:
 
 
 def main():
-    mcws_index = load_mcws(MCWS_FILE)
+    carmodel_file, mcws_file, output_file = get_paths()
+    print(f"Input carmodel : {carmodel_file.name}")
+    print(f"Input MCWS     : {mcws_file.name}")
+
+    mcws_index = load_mcws(mcws_file)
     total_mcws = len(mcws_index)
 
     matched = []
     total_carmodel = 0
     skipped = 0
 
-    with open(CARMODEL_FILE, newline="", encoding="utf-8") as f:
+    with open(carmodel_file, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             total_carmodel += 1
@@ -80,7 +108,7 @@ def main():
                 "immagini_url":      row["immagini_url"],
             })
 
-    with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=OUTPUT_FIELDS)
         writer.writeheader()
         writer.writerows(matched)
@@ -92,13 +120,7 @@ def main():
     print(f"Match trovati         : {len(matched)}")
     print(f"Skip (no match)       : {skipped}")
     print(f"Match rate            : {match_rate:.1f}%")
-    print(f"\nSalvato: {OUTPUT_FILE}")
-
-    if matched:
-        print("\nPrime 3 righe:")
-        print(",".join(OUTPUT_FIELDS))
-        for row in matched[:3]:
-            print(",".join(str(row[k]) for k in OUTPUT_FIELDS))
+    print(f"\nSalvato: {output_file}")
 
 
 if __name__ == "__main__":
