@@ -17,6 +17,11 @@ else
   exit 1
 fi
 
+# ── Impedisce il sleep del Mac per tutta la durata dello script ──────────────
+caffeinate -dims &
+CAFFEINATE_PID=$!
+trap "kill $CAFFEINATE_PID 2>/dev/null" EXIT
+
 # ── Header ───────────────────────────────────────────────────────────────────
 clear
 echo "╔══════════════════════════════════════════════════════╗"
