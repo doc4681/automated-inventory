@@ -99,10 +99,9 @@ def main():
 
         # Download CSV direttamente con Chrome (bypassa CF)
         print(f"Download da {DOWNLOAD_URL}...")
-        # Rimuovi eventuali CSV vecchi per non confonderli
+        # Rimuovi eventuali CSV vecchi nella dir root per non confonderli
         for old in DOWNLOAD_DIR.glob("*.csv"):
-            if old.name != OUTPUT_FILE.name:
-                old.unlink()
+            old.unlink()
 
         driver.get(DOWNLOAD_URL)
         time.sleep(2)  # breve pausa per avviare il download

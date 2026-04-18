@@ -56,16 +56,32 @@ def load_trademarks(path: Path) -> list[str]:
     return marks
 
 
+from selenium.common.exceptions import (
+    InvalidSessionIdException, NoSuchWindowException, WebDriverException
+)
+
+RESTART_EVERY = 10   # riavvia Chrome ogni N brand
+
+
 def make_driver() -> uc.Chrome:
-    driver = uc.Chrome(headless=False, use_subprocess=True)
-    return driver
+    print("  [Chrome] avvio sessione...")
+    return uc.Chrome(headless=False, use_subprocess=True)
+
+
+def restart_driver(driver: uc.Chrome) -> uc.Chrome:
+    print("  [Chrome] restart sessione...")
+    try:
+        driver.quit()
+    except Exception:
+        pass
+    time.sleep(2)
+    return make_driver()
 
 
 def get_page_soup(driver: uc.Chrome, url: str) -> BeautifulSoup | None:
-    from selenium.common.exceptions import NoSuchWindowException, WebDriverException
     try:
         driver.get(url)
-    except (NoSuchWindowException, WebDriverException) as e:
+    except (InvalidSessionIdException, NoSuchWindowException, WebDriverException) as e:
         print(f"  ERRORE navigazione ({type(e).__name__}): {url}")
         return None
     # Attesa Cloudflare challenge (max 30s)
@@ -207,12 +223,31 @@ def main():
     all_products = []
 
     try:
-        for tm in trademarks:
-            all_products.extend(scrape_trademark(driver, tm))
+        for i, tm in enumerate(trademarks):
+            # Restart Chrome ogni RESTART_EVERY brand (non al primo)
+            if not args.test and i > 0 and i % RESTART_EVERY == 0:
+                print(f"\n  [Chrome] restart preventivo dopo {i} brand...")
+                driver = restart_driver(driver)
+
+            # Tenta lo scraping con max 2 tentativi su crash di sessione
+            for attempt in range(1, 3):
+                try:
+                    results = scrape_trademark(driver, tm)
+                    all_products.extend(results)
+                    break
+                except (InvalidSessionIdException, NoSuchWindowException) as e:
+                    print(f"  [Chrome] crash ({type(e).__name__}) su {tm}, tentativo {attempt}/2")
+                    driver = restart_driver(driver)
+                    if attempt == 2:
+                        print(f"  {tm}: skip dopo 2 crash.")
+
             if not args.test:
                 time.sleep(SLEEP)
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
     output_file = get_output_file()
     with open(output_file, "w", newline="", encoding="utf-8") as f:
