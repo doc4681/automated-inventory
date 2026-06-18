@@ -33,6 +33,16 @@ def clean_code(code):
         return ""
     return str(code).strip()
 
+def match_key(code):
+    """
+    Chiave di confronto tollerante agli zeri iniziali persi a monte
+    (es. Shopify Products.csv con Variant SKU "3518" invece di "03518").
+    Usata SOLO per il matching, non per i valori mostrati in output.
+    """
+    c = clean_code(code).upper()
+    stripped = c.lstrip('0')
+    return stripped if stripped else c
+
 def normalize_string(s):
     if pd.isna(s):
         return ""
@@ -100,7 +110,7 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file, enable_bbr=T
             if code in seen_mcws:
                 duplicates.append({'SKU': code, 'Brand': tm, 'List': 'MCWS'})
             seen_mcws.add(code)
-            available_skus.add(code)
+            available_skus.add(match_key(code))
 
     # --- Processa BBR (Solo se abilitato) ---
     if enable_bbr and not df_bbr.empty:
@@ -114,7 +124,7 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file, enable_bbr=T
                 qty = 0
 
             if sku and qty > 0:
-                available_skus.add(sku)
+                available_skus.add(match_key(sku))
 
     # 3. Confronto con Shopify
     rows_output = []
@@ -155,8 +165,8 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file, enable_bbr=T
 
         current_logic = 1 if current_val > 0 else 0
 
-        # Check match in master list
-        is_in_stock_list = sku_clean in available_skus
+        # Check match in master list (tollerante a zeri iniziali persi)
+        is_in_stock_list = match_key(sku_clean) in available_skus
 
         new_qty = None
         change_log = ""

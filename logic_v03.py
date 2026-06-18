@@ -72,6 +72,16 @@ def normalize_string(s):
         return ""
     return re.sub(r'[^A-Z0-9]', '', str(s).upper())
 
+def match_key(code):
+    """
+    Chiave di confronto tollerante agli zeri iniziali persi a monte
+    (es. Shopify Products.csv con Variant SKU "3518" invece di "03518").
+    Usata SOLO per il matching, non per i valori mostrati in output.
+    """
+    c = str(code).strip().upper()
+    stripped = c.lstrip('0')
+    return stripped if stripped else c
+
 def clean_currency(value):
     if pd.isna(value) or value == '':
         return 0.0
@@ -273,7 +283,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
         for _, row in df_bbr.iterrows():
             sku = str(row.get(COL_BBR_SKU, '')).strip()
             if sku:
-                bbr_lookup[sku] = {
+                bbr_lookup[match_key(sku)] = {
                     'cost': clean_currency(row.get(COL_BBR_COST, 0)),
                     'qty': clean_qty(row.get(COL_BBR_QTY, 0))
                 }
@@ -288,7 +298,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 continue
             code = str(row.get(COL_MCWS_CODE, '')).strip()
             if code:
-                mcws_lookup[code] = {
+                mcws_lookup[match_key(code)] = {
                     'cost': clean_currency(row.get(COL_MCWS_NET, 0)),
                     'qty': 999,
                     'brand': raw_trademark
@@ -313,6 +323,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             stats['inventory']['total'] += 1
 
             sku = str(row.get(COL_SKU, '')).strip()
+            sku_key = match_key(sku)
             tags = str(row.get(COL_TAGS, ''))
 
             norm_tags = normalize_string(tags)
@@ -336,9 +347,9 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             # --- 1. IDENTIFICAZIONE FORNITORE ---
 
             # A. CHECK BBR
-            if enable_bbr and sku in bbr_lookup:
+            if enable_bbr and sku_key in bbr_lookup:
                 found_supplier = True
-                supplier_data = bbr_lookup[sku]
+                supplier_data = bbr_lookup[sku_key]
                 supplier_brand = "BBR"
                 s_cost = supplier_data['cost']
                 if s_cost > 0:
@@ -363,7 +374,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
 
             # C. CHECK MCWS
             else:
-                match_obj = mcws_lookup.get(sku)
+                match_obj = mcws_lookup.get(sku_key)
                 if match_obj:
                     mcws_brand = match_obj['brand']
                     if check_brand_compatibility(tags, mcws_brand):
