@@ -257,6 +257,15 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
     markup_rules = load_markup_rules(markup_file)
     valid_trademarks_normalized = load_trademarks(valid_trademarks_file)
 
+    logs = []
+    # CHECK TIPO DATI SKU/CODE (debug zeri iniziali)
+    if not df_mcws.empty and COL_MCWS_CODE in df_mcws.columns:
+        sample_mcws = df_mcws[COL_MCWS_CODE].dropna().astype(str).head(3).tolist()
+        logs.append(f"[CHECK TIPO DATI] MCWS '{COL_MCWS_CODE}' dtype={df_mcws[COL_MCWS_CODE].dtype}, esempi={sample_mcws}")
+    if not df_shopify.empty and COL_SKU in df_shopify.columns:
+        sample_shop = df_shopify[COL_SKU].dropna().astype(str).head(3).tolist()
+        logs.append(f"[CHECK TIPO DATI] Shopify '{COL_SKU}' dtype={df_shopify[COL_SKU].dtype}, esempi={sample_shop}")
+
     # Init Lookup Tables
     bbr_lookup = {}
     if enable_bbr and not df_bbr.empty:
@@ -290,7 +299,6 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
         'updated_price': 0, 'errors': 0,
         'inventory': {'total': 0, 'updates_1': 0, 'updates_0': 0}
     }
-    logs = []
 
     # FIX pandas 3.x: converti in object dtype per evitare Arrow strict typing
     output_df = df_shopify.copy().astype(object)
