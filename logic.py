@@ -65,6 +65,16 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file, enable_bbr=T
     5. Genera file con SOLO le righe da aggiornare (0->1 o 1->0).
     """
 
+    log_messages = []
+
+    # 0. VERIFICA TIPO DATI SKU/CODE (debug zeri iniziali)
+    if not df_mcws.empty and COL_MCWS_CODE in df_mcws.columns:
+        sample_mcws = df_mcws[COL_MCWS_CODE].dropna().astype(str).head(3).tolist()
+        log_messages.append(f"[CHECK TIPO DATI] MCWS '{COL_MCWS_CODE}' dtype={df_mcws[COL_MCWS_CODE].dtype}, esempi={sample_mcws}")
+    if not df_shopify.empty and COL_SHOPIFY_SKU in df_shopify.columns:
+        sample_shop = df_shopify[COL_SHOPIFY_SKU].dropna().astype(str).head(3).tolist()
+        log_messages.append(f"[CHECK TIPO DATI] Shopify '{COL_SHOPIFY_SKU}' dtype={df_shopify[COL_SHOPIFY_SKU].dtype}, esempi={sample_shop}")
+
     # 1. Carica Trademarks
     valid_trademarks = load_trademarks(trademarks_file)
 
@@ -110,7 +120,6 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file, enable_bbr=T
     rows_output = []
     stats = {'total': 0, 'updates_1': 0, 'updates_0': 0}
     processed_skus = set()
-    log_messages = []
 
     for index, row in df_shopify.iterrows():
         stats['total'] += 1
