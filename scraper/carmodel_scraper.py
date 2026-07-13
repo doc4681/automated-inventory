@@ -63,9 +63,39 @@ from selenium.common.exceptions import (
 RESTART_EVERY = 10   # riavvia Chrome ogni N brand
 
 
+import subprocess
+
+
+def chrome_major_version() -> int | None:
+    """Versione major di Chrome installato (es. 148), per allineare il chromedriver.
+    Evita l'errore 'ChromeDriver only supports Chrome version X' quando uc scarica
+    un driver piu' recente del browser. Override manuale via env CHROME_MAJOR."""
+    env = os.environ.get("CHROME_MAJOR")
+    if env and env.isdigit():
+        return int(env)
+    paths = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+    ]
+    for path in paths:
+        try:
+            out = subprocess.check_output([path, "--version"], text=True, timeout=10)
+            m = re.search(r"\b(\d+)\.", out)
+            if m:
+                return int(m.group(1))
+        except Exception:
+            continue
+    return None
+
+
 def make_driver() -> uc.Chrome:
-    print("  [Chrome] avvio sessione...")
-    return uc.Chrome(headless=False, use_subprocess=True)
+    # Headless opt-in via env CARMODEL_HEADLESS=1.
+    # NB: in headless undetected-chromedriver viene piu' spesso bloccato da
+    # Cloudflare; default = finestra visibile (piu' affidabile).
+    headless = os.environ.get("CARMODEL_HEADLESS", "0") == "1"
+    vmain = chrome_major_version()
+    print(f"  [Chrome] avvio sessione (headless={headless}, version_main={vmain})...")
+    return uc.Chrome(headless=headless, use_subprocess=True, version_main=vmain)
 
 
 def restart_driver(driver: uc.Chrome) -> uc.Chrome:
@@ -81,7 +111,12 @@ def restart_driver(driver: uc.Chrome) -> uc.Chrome:
 def get_page_soup(driver: uc.Chrome, url: str) -> BeautifulSoup | None:
     try:
         driver.get(url)
-    except (InvalidSessionIdException, NoSuchWindowException, WebDriverException) as e:
+    except (InvalidSessionIdException, NoSuchWindowException) as e:
+        # Sessione/finestra morta: NON saltare il brand — propaga così main()
+        # riavvia Chrome subito e ritenta (evita di perdere i brand successivi).
+        print(f"  [Chrome] sessione persa ({type(e).__name__}) su {url} — riavvio")
+        raise
+    except WebDriverException as e:
         print(f"  ERRORE navigazione ({type(e).__name__}): {url}")
         return None
     # Attesa Cloudflare challenge (max 30s)
@@ -89,6 +124,9 @@ def get_page_soup(driver: uc.Chrome, url: str) -> BeautifulSoup | None:
         time.sleep(2)
         try:
             title = driver.title
+        except (InvalidSessionIdException, NoSuchWindowException) as e:
+            print(f"  [Chrome] sessione persa ({type(e).__name__}) — riavvio")
+            raise
         except WebDriverException:
             return None
         if "Just a moment" not in title and "Ci siamo quasi" not in title:

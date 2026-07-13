@@ -1,0 +1,40 @@
+╔══════════════════════════════════════════════════════════════════╗
+║          VROOMI — PANNELLO DI CONTROLLO — Installazione            ║
+║                    (Mac + Google Chrome)                           ║
+╚══════════════════════════════════════════════════════════════════╝
+
+Servono solo 3 passi. La prima volta ci mette 1-2 minuti a prepararsi.
+
+
+PASSO 1 — Scompatta
+────────────────────
+Fai doppio click sul file .zip che hai ricevuto.
+Comparirà una cartella "automated-inventory". Mettila dove vuoi
+(es. sulla Scrivania).
+
+
+PASSO 2 — Metti le credenziali
+──────────────────────────────
+Dentro la cartella trovi il file:   credenziali.esempio.env
+1) RINOMINALO in:                   credenziali.env
+2) Aprilo (doppio click, si apre con TextEdit) e riempi i campi vuoti:
+      - MCWS_USERNAME  e  MCWS_PASSWORD   (login modelcarswholesale.com)
+      - SHOPIFY_CLIENT_SECRET             (solo se userai Shopify)
+3) Salva e chiudi.
+   (I valori te li fornisce Matteo.)
+
+
+PASSO 3 — Avvia
+────────────────
+Fai doppio click su:   AVVIA PANNELLO.command
+Si apre il Terminale, prepara tutto e apre il pannello nel browser.
+Da lì fai tutto con i pulsanti.
+
+⚠️  La PRIMA volta, se il Mac dice "impossibile aprire: sviluppatore
+    non identificato", NON fare doppio click: fai CLICK DESTRO sul file
+    "AVVIA PANNELLO.command" → Apri → Apri.  (Serve solo la prima volta.)
+
+
+FATTO. Per riaprirlo in futuro: doppio click su "AVVIA PANNELLO.command".
+
+Guida completa nel file  LEGGIMI.md

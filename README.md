@@ -1,4 +1,19 @@
-# 📦 Inventory Sync WebApp
+# 📦 Vroomi — Automazione catalogo & inventario
+
+Questo repo contiene **due strumenti distinti**:
+
+| Strumento | A cosa serve | Come si lancia |
+|-----------|--------------|----------------|
+| **1. Catalogo carmodel + MCWS** | Scarica dati prodotto (immagini incl.) da carmodel.com, scarica il listino MCWS, e li unisce in un CSV per Shopify. | **Doppio click su `AGGIORNA INVENTARIO.command`** — vedi **[LEGGIMI.md](LEGGIMI.md)** |
+| **2. Webapp Streamlit (sync quantità)** | Sincronizza quantità/costi di magazzino Shopify ↔ MCWS/BBR caricando CSV. | `streamlit run app.py` — documentata qui sotto ↓ |
+
+➡️ **Per il catalogo carmodel, leggi [LEGGIMI.md](LEGGIMI.md).** Il risultato finale è sempre in `RISULTATO/merged_products_LATEST.csv`.
+
+---
+
+# Strumento 2 — Inventory Sync WebApp (Streamlit)
+
+> ⚠️ Strumento **separato** dal catalogo carmodel. Sincronizza solo quantità/costi.
 
 Una webapp per sincronizzare l'inventario tra Shopify e i listini fornitori (MCWS e BBR).
 

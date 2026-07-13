@@ -3,6 +3,8 @@
 .env.*
 *.env
 .env.vroomi
+credenziali.env
+!credenziali.esempio.env
 
 # Claude Code (può contenere credenziali nei permessi locali)
 .claude/
@@ -28,6 +30,14 @@ scraper/output/
 downloader/output/
 merger/output/
 
+# Risultato finale (rigenerato a ogni run)
+RISULTATO/
+
 # Log temporanei
 scraper/scraper_run.log
 run_local.log
+logs/
+
+# Stato runtime del pannello Streamlit
+.webapp_run.json
+_archivio/

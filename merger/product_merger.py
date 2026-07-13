@@ -59,6 +59,15 @@ def normalize(s: str) -> str:
     return s.upper().replace(" ", "")
 
 
+# Se la nota di carmodel contiene questa frase, la cella nota viene lasciata VUOTA.
+EXCLUDE_NOTE_PHRASE = "EXCLUSIVE CARMODEL"
+
+
+def clean_note(note: str) -> str:
+    note = note or ""
+    return "" if EXCLUDE_NOTE_PHRASE in note.upper() else note
+
+
 def load_mcws(path: Path) -> dict[str, dict]:
     """Carica MCWS indicizzato per Code normalizzato."""
     index = {}
@@ -102,7 +111,7 @@ def main():
                 "net_price_mcws":    mcws_row["Net Price"],
                 "colore":            row["colore"],
                 "materiale":         row["materiale"],
-                "note":              row["note"],
+                "note":              clean_note(row["note"]),
                 "ean":               mcws_row["EAN"],
                 "url_prodotto":      row["url_prodotto"],
                 "immagini_url":      row["immagini_url"],

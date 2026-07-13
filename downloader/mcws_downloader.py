@@ -11,14 +11,39 @@ Uso:
 """
 
 import os
+import re
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
 
 import undetected_chromedriver as uc
+
+
+def chrome_major_version() -> int | None:
+    """Versione major di Chrome installato (es. 148), per allineare il chromedriver.
+    Override manuale via env CHROME_MAJOR."""
+    env = os.environ.get("CHROME_MAJOR")
+    if env and env.isdigit():
+        return int(env)
+    for path in (
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+    ):
+        try:
+            out = subprocess.check_output([path, "--version"], text=True, timeout=10)
+            m = re.search(r"\b(\d+)\.", out)
+            if m:
+                return int(m.group(1))
+        except Exception:
+            continue
+    return None
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import (
+    NoSuchWindowException, InvalidSessionIdException, WebDriverException,
+)
 
 LOGIN_URL = "https://www.modelcarswholesale.com/it/login"
 DOWNLOAD_URL = "https://www.modelcarswholesale.com/downloadStocklistCsv"
@@ -50,12 +75,8 @@ def wait_for_download(directory: Path, timeout: int = 60) -> Path | None:
     return None
 
 
-def main():
-    username = os.environ["MCWS_USERNAME"]
-    password = os.environ["MCWS_PASSWORD"]
-    output_file = get_output_file()
-
-    # Configura Chrome: download automatico nella directory del downloader
+def make_driver() -> uc.Chrome:
+    """Crea una sessione Chrome configurata per il download automatico."""
     options = uc.ChromeOptions()
     prefs = {
         "download.default_directory": str(DOWNLOAD_DIR),
@@ -64,10 +85,20 @@ def main():
         "safebrowsing.enabled": True,
     }
     options.add_experimental_option("prefs", prefs)
+    # Headless opt-in via env MCWS_HEADLESS=1.
+    # NB: in headless Chrome puo' bloccare i download verso default_directory;
+    # default = finestra visibile (download affidabile).
+    headless = os.environ.get("MCWS_HEADLESS", "0") == "1"
+    vmain = chrome_major_version()
+    print(f"Avvio Chrome (undetected, headless={headless}, version_main={vmain})...")
+    return uc.Chrome(headless=headless, use_subprocess=True, options=options, version_main=vmain)
 
-    print("Avvio Chrome (undetected)...")
-    driver = uc.Chrome(headless=False, use_subprocess=True, options=options)
 
+def download_once(username: str, password: str, output_file: Path) -> None:
+    """Un tentativo completo: login → download → logout. Solleva le eccezioni
+    di sessione/finestra (NoSuchWindowException/InvalidSessionIdException) così
+    main() può ritentare con una sessione Chrome nuova."""
+    driver = make_driver()
     try:
         # Login
         print(f"Navigazione verso {LOGIN_URL}")
@@ -125,7 +156,29 @@ def main():
         print(f"Logout: {driver.current_url}")
 
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+
+def main():
+    username = os.environ["MCWS_USERNAME"]
+    password = os.environ["MCWS_PASSWORD"]
+    output_file = get_output_file()
+
+    MAX_ATTEMPTS = 3
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            download_once(username, password, output_file)
+            break
+        except (NoSuchWindowException, InvalidSessionIdException) as e:
+            print(f"  [Chrome] sessione persa ({type(e).__name__}) — tentativo {attempt}/{MAX_ATTEMPTS}, riprovo")
+            time.sleep(3)
+            if attempt == MAX_ATTEMPTS:
+                raise SystemExit(
+                    f"ERRORE: download MCWS fallito dopo {MAX_ATTEMPTS} tentativi "
+                    "(finestra Chrome instabile)")
 
     # Statistiche CSV
     lines = output_file.read_text(encoding="utf-8", errors="replace").splitlines()
