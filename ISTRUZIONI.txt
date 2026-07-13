@@ -30,9 +30,18 @@ Fai doppio click su:   AVVIA PANNELLO.command
 Si apre il Terminale, prepara tutto e apre il pannello nel browser.
 Da lì fai tutto con i pulsanti.
 
-⚠️  La PRIMA volta, se il Mac dice "impossibile aprire: sviluppatore
-    non identificato", NON fare doppio click: fai CLICK DESTRO sul file
-    "AVVIA PANNELLO.command" → Apri → Apri.  (Serve solo la prima volta.)
+⚠️  SBLOCCO macOS (serve solo la PRIMA volta, per i file scaricati/da WhatsApp)
+    Se il Mac dice "AVVIA PANNELLO.command è danneggiato e non può essere
+    aperto" oppure "sviluppatore non identificato", il file NON è rotto:
+    è solo il blocco di sicurezza di macOS. Sbloccalo così (30 secondi):
+
+      1. Apri "Terminale" (⌘ + barra spaziatrice, scrivi Terminale, Invio).
+      2. Scrivi questo, CON uno spazio finale, ma NON premere ancora Invio:
+             xattr -cr
+      3. Trascina la cartella di questo progetto DENTRO la finestra del
+         Terminale (il percorso si incolla da solo).
+      4. Premi Invio.
+      5. Ora fai doppio click su "AVVIA PANNELLO.command": si apre.
 
 
 FATTO. Per riaprirlo in futuro: doppio click su "AVVIA PANNELLO.command".
