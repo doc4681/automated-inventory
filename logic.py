@@ -33,6 +33,16 @@ def clean_code(code):
         return ""
     return str(code).strip()
 
+def match_key(code):
+    """
+    Chiave di confronto tollerante agli zeri iniziali persi a monte
+    (es. Shopify Products.csv con Variant SKU "3518" invece di "03518").
+    Usata SOLO per il matching, non per i valori mostrati in output.
+    """
+    c = clean_code(code).upper()
+    stripped = c.lstrip('0')
+    return stripped if stripped else c
+
 def normalize_string(s):
     if pd.isna(s):
         return ""
@@ -65,6 +75,16 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file, enable_bbr=T
     5. Genera file con SOLO le righe da aggiornare (0->1 o 1->0).
     """
 
+    log_messages = []
+
+    # 0. VERIFICA TIPO DATI SKU/CODE (debug zeri iniziali)
+    if not df_mcws.empty and COL_MCWS_CODE in df_mcws.columns:
+        sample_mcws = df_mcws[COL_MCWS_CODE].dropna().astype(str).head(3).tolist()
+        log_messages.append(f"[CHECK TIPO DATI] MCWS '{COL_MCWS_CODE}' dtype={df_mcws[COL_MCWS_CODE].dtype}, esempi={sample_mcws}")
+    if not df_shopify.empty and COL_SHOPIFY_SKU in df_shopify.columns:
+        sample_shop = df_shopify[COL_SHOPIFY_SKU].dropna().astype(str).head(3).tolist()
+        log_messages.append(f"[CHECK TIPO DATI] Shopify '{COL_SHOPIFY_SKU}' dtype={df_shopify[COL_SHOPIFY_SKU].dtype}, esempi={sample_shop}")
+
     # 1. Carica Trademarks
     valid_trademarks = load_trademarks(trademarks_file)
 
@@ -90,7 +110,7 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file, enable_bbr=T
             if code in seen_mcws:
                 duplicates.append({'SKU': code, 'Brand': tm, 'List': 'MCWS'})
             seen_mcws.add(code)
-            available_skus.add(code)
+            available_skus.add(match_key(code))
 
     # --- Processa BBR (Solo se abilitato) ---
     if enable_bbr and not df_bbr.empty:
@@ -104,13 +124,12 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file, enable_bbr=T
                 qty = 0
 
             if sku and qty > 0:
-                available_skus.add(sku)
+                available_skus.add(match_key(sku))
 
     # 3. Confronto con Shopify
     rows_output = []
     stats = {'total': 0, 'updates_1': 0, 'updates_0': 0}
     processed_skus = set()
-    log_messages = []
 
     for index, row in df_shopify.iterrows():
         stats['total'] += 1
@@ -146,8 +165,8 @@ def process_inventory(df_shopify, df_mcws, df_bbr, trademarks_file, enable_bbr=T
 
         current_logic = 1 if current_val > 0 else 0
 
-        # Check match in master list
-        is_in_stock_list = sku_clean in available_skus
+        # Check match in master list (tollerante a zeri iniziali persi)
+        is_in_stock_list = match_key(sku_clean) in available_skus
 
         new_qty = None
         change_log = ""

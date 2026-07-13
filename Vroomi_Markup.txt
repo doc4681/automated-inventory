@@ -15,7 +15,7 @@ NZG		1,50
 Otto Mobile	1,50
 Schuco		1,50
 Spark Model	1,50
-Sun Star	1,50
+Sun-Star	1,50
 Trofeu		1,50
 Truescale	1,50
 GP Replicas	1,50
@@ -49,3 +49,4 @@ MASERATI MODELS    1,70
 CMC    1,50
 ROS-MODEL    1,50
 MINIPARTES   1,70
+TRIPLE9    1,70

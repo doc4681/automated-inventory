@@ -72,6 +72,16 @@ def normalize_string(s):
         return ""
     return re.sub(r'[^A-Z0-9]', '', str(s).upper())
 
+def match_key(code):
+    """
+    Chiave di confronto tollerante agli zeri iniziali persi a monte
+    (es. Shopify Products.csv con Variant SKU "3518" invece di "03518").
+    Usata SOLO per il matching, non per i valori mostrati in output.
+    """
+    c = str(code).strip().upper()
+    stripped = c.lstrip('0')
+    return stripped if stripped else c
+
 def clean_currency(value):
     if pd.isna(value) or value == '':
         return 0.0
@@ -257,6 +267,15 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
     markup_rules = load_markup_rules(markup_file)
     valid_trademarks_normalized = load_trademarks(valid_trademarks_file)
 
+    logs = []
+    # CHECK TIPO DATI SKU/CODE (debug zeri iniziali)
+    if not df_mcws.empty and COL_MCWS_CODE in df_mcws.columns:
+        sample_mcws = df_mcws[COL_MCWS_CODE].dropna().astype(str).head(3).tolist()
+        logs.append(f"[CHECK TIPO DATI] MCWS '{COL_MCWS_CODE}' dtype={df_mcws[COL_MCWS_CODE].dtype}, esempi={sample_mcws}")
+    if not df_shopify.empty and COL_SKU in df_shopify.columns:
+        sample_shop = df_shopify[COL_SKU].dropna().astype(str).head(3).tolist()
+        logs.append(f"[CHECK TIPO DATI] Shopify '{COL_SKU}' dtype={df_shopify[COL_SKU].dtype}, esempi={sample_shop}")
+
     # Init Lookup Tables
     bbr_lookup = {}
     if enable_bbr and not df_bbr.empty:
@@ -264,7 +283,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
         for _, row in df_bbr.iterrows():
             sku = str(row.get(COL_BBR_SKU, '')).strip()
             if sku:
-                bbr_lookup[sku] = {
+                bbr_lookup[match_key(sku)] = {
                     'cost': clean_currency(row.get(COL_BBR_COST, 0)),
                     'qty': clean_qty(row.get(COL_BBR_QTY, 0))
                 }
@@ -279,7 +298,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 continue
             code = str(row.get(COL_MCWS_CODE, '')).strip()
             if code:
-                mcws_lookup[code] = {
+                mcws_lookup[match_key(code)] = {
                     'cost': clean_currency(row.get(COL_MCWS_NET, 0)),
                     'qty': 999,
                     'brand': raw_trademark
@@ -290,7 +309,6 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
         'updated_price': 0, 'errors': 0,
         'inventory': {'total': 0, 'updates_1': 0, 'updates_0': 0}
     }
-    logs = []
 
     # FIX pandas 3.x: converti in object dtype per evitare Arrow strict typing
     output_df = df_shopify.copy().astype(object)
@@ -305,6 +323,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             stats['inventory']['total'] += 1
 
             sku = str(row.get(COL_SKU, '')).strip()
+            sku_key = match_key(sku)
             tags = str(row.get(COL_TAGS, ''))
 
             norm_tags = normalize_string(tags)
@@ -328,9 +347,9 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
             # --- 1. IDENTIFICAZIONE FORNITORE ---
 
             # A. CHECK BBR
-            if enable_bbr and sku in bbr_lookup:
+            if enable_bbr and sku_key in bbr_lookup:
                 found_supplier = True
-                supplier_data = bbr_lookup[sku]
+                supplier_data = bbr_lookup[sku_key]
                 supplier_brand = "BBR"
                 s_cost = supplier_data['cost']
                 if s_cost > 0:
@@ -355,7 +374,7 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
 
             # C. CHECK MCWS
             else:
-                match_obj = mcws_lookup.get(sku)
+                match_obj = mcws_lookup.get(sku_key)
                 if match_obj:
                     mcws_brand = match_obj['brand']
                     if check_brand_compatibility(tags, mcws_brand):

@@ -6,6 +6,7 @@ incapsulata in render_sync_tab() per stare dentro un tab del pannello.
 
 import os
 from datetime import datetime
+from io import BytesIO
 
 import pandas as pd
 import streamlit as st
@@ -16,7 +17,33 @@ from logic import (
 )
 from logic_v03 import (
     process_inventory_v03, process_markup_only, OUTPUT_PREFIX as OUTPUT_PREFIX_V03,
+    COL_MCWS_CODE,
 )
+
+
+# Colonne che DEVONO restare testo (codici con zeri iniziali: es. "03518").
+# Excel al doppio click converte il CSV in numero e perde lo zero → mismatch
+# al giro successivo. L'export .xlsx forza queste colonne come Testo.
+TEXT_FORCED_COLUMNS = [COL_SHOPIFY_SKU, COL_MCWS_CODE, "Our Code"]
+
+
+def dataframe_to_excel_bytes(df: pd.DataFrame, text_columns: list) -> bytes:
+    """Genera un .xlsx con le colonne in text_columns formattate come Testo
+    (number_format='@'), così Excel non le converte mai in numero."""
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Sheet1")
+        worksheet = writer.sheets["Sheet1"]
+        for col_name in text_columns:
+            if col_name not in df.columns:
+                continue
+            col_idx = df.columns.get_loc(col_name) + 1  # openpyxl è 1-based
+            for row_idx in range(2, len(df) + 2):       # riga 1 = header
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                if cell.value is not None:
+                    cell.value = str(cell.value)
+                cell.number_format = "@"
+    return output.getvalue()
 
 
 def load_dataframe(uploaded_file):
@@ -209,11 +236,22 @@ def render_sync_tab():
 
                 st.markdown("### 📥 Download")
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_filename = f"{OUTPUT_PREFIX}_{timestamp}.csv"
                 st.dataframe(result_df.head(10), use_container_width=True)
-                csv_output = result_df.to_csv(index=False).encode('utf-8')
-                st.download_button("✅ Scarica File Elaborato", csv_output, output_filename,
-                                   "text/csv", type="primary")
+                col_dl1, col_dl2 = st.columns(2)
+                with col_dl1:
+                    csv_output = result_df.to_csv(index=False).encode('utf-8')
+                    st.download_button("✅ Scarica CSV", csv_output,
+                                       f"{OUTPUT_PREFIX}_{timestamp}.csv", "text/csv",
+                                       type="primary", use_container_width=True)
+                with col_dl2:
+                    xlsx_output = dataframe_to_excel_bytes(result_df, TEXT_FORCED_COLUMNS)
+                    st.download_button(
+                        "📗 Scarica Excel (consigliato)", xlsx_output,
+                        f"{OUTPUT_PREFIX}_{timestamp}.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        help="Nel .xlsx la colonna SKU/Code resta Testo: Excel NON perde "
+                             "gli zeri iniziali (es. 03518), a differenza del CSV.")
                 st.success("Elaborazione completata con successo!")
             else:
                 st.warning("Nessuna riga da aggiornare o nessun risultato generato.")
