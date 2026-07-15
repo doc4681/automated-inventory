@@ -51,18 +51,38 @@ def _env_value(key: str) -> str | None:
 
 
 def credentials_status() -> dict:
-    """Quali credenziali sono presenti (solo presenza, mai i valori)."""
-    txt = _read_env_text()
-    has = lambda k: bool(re.search(rf'^\s*export\s+{k}=', txt, re.M))
-    mcws = has("MCWS_USERNAME") and has("MCWS_PASSWORD")
-    shopify = has("SHOPIFY_ADMIN_TOKEN") or (has("SHOPIFY_CLIENT_ID") and has("SHOPIFY_CLIENT_SECRET"))
+    """Quali credenziali sono presenti E compilate (mai i valori).
+    NB: serve il valore non vuoto — il template ha le righe ma vuote."""
+    def filled(key):
+        return bool((_env_value(key) or "").strip())
+
+    mcws = filled("MCWS_USERNAME") and filled("MCWS_PASSWORD")
+    shopify = filled("SHOPIFY_ADMIN_TOKEN") or (
+        filled("SHOPIFY_CLIENT_ID") and filled("SHOPIFY_CLIENT_SECRET"))
     return {
         "env_file": str(env_file()),
         "env_exists": env_file().exists(),
+        "local_env": str(LOCAL_ENV),
+        "local_env_exists": LOCAL_ENV.exists(),
+        "template_exists": (REPO / "credenziali.esempio.env").exists(),
         "mcws": mcws,
         "shopify": shopify,
         "enable_shopify": (_env_value("ENABLE_SHOPIFY") or "0") == "1",
     }
+
+
+def create_local_env_from_template() -> bool:
+    """Crea credenziali.env copiando il template (se non esiste già).
+    Ritorna True se creato ora."""
+    template = REPO / "credenziali.esempio.env"
+    if LOCAL_ENV.exists() or not template.exists():
+        return False
+    LOCAL_ENV.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+    try:
+        LOCAL_ENV.chmod(0o600)
+    except OSError:
+        pass
+    return True
 
 
 def set_enable_shopify(on: bool) -> None:

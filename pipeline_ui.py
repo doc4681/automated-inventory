@@ -17,17 +17,33 @@ def render_pipeline_tab():
 
     creds = ctl.credentials_status()
 
-    # ── Credenziali ────────────────────────────────────────────────────────
-    if not creds["env_exists"] or not creds["mcws"]:
-        st.error(
-            f"⚠️ Credenziali mancanti. Crea/completa il file **{creds['env_file']}** con:\n\n"
-            "```bash\n"
-            'export MCWS_USERNAME="tua@email"\n'
-            'export MCWS_PASSWORD="password"\n'
-            "```\n"
-            "Per l'arricchimento Shopify aggiungi anche `SHOPIFY_CLIENT_ID`, "
-            "`SHOPIFY_CLIENT_SECRET`, `SHOPIFY_STORE_DOMAIN`."
+    # ── Credenziali (guida passo-passo se mancano) ──────────────────────────
+    if not creds["mcws"]:
+        st.error("⚠️ **Credenziali mancanti** — vanno compilate una volta sola. "
+                 "Segui i passi qui sotto (30 secondi).")
+
+        if not creds["local_env_exists"]:
+            st.markdown("**1️⃣ Crea il file delle credenziali**")
+            if st.button("📄 Crea il file `credenziali.env`", type="primary",
+                         disabled=not creds["template_exists"]):
+                if ctl.create_local_env_from_template():
+                    st.success("File creato! Ora vai al passo 2.")
+                    st.rerun()
+                else:
+                    st.warning("Non trovo `credenziali.esempio.env` nella cartella.")
+            st.caption("(Crea `credenziali.env` partendo dal modello, senza rinominare a mano.)")
+        else:
+            st.markdown("**1️⃣ File credenziali** ✅ già creato")
+
+        st.markdown(
+            "**2️⃣ Compilalo** — apri questo file (doppio click → si apre con TextEdit):\n\n"
+            f"`{creds['local_env']}`\n\n"
+            "e riempi i campi **tra le virgolette**:\n"
+            "- `MCWS_USERNAME` e `MCWS_PASSWORD` → il login di modelcarswholesale.com\n"
+            "- `SHOPIFY_CLIENT_SECRET` → solo se serve l'arricchimento Shopify\n\n"
+            "**3️⃣ Salva** il file e **ricarica questa pagina** (⌘+R)."
         )
+        st.caption("I valori te li fornisce Matteo. Restano solo su questo Mac.")
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Credenziali MCWS", "✅" if creds["mcws"] else "❌ mancanti")
