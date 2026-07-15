@@ -28,6 +28,8 @@ Uso:
   python shopify_enricher/shopify_enricher.py --apply --limit 50   # solo primi 50 (test)
 """
 
+from __future__ import annotations  # compatibilità Python 3.9 (sintassi "X | None")
+
 import os
 import sys
 import csv

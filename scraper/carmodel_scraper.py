@@ -8,6 +8,8 @@ Usage:
   python scraper/carmodel_scraper.py          # tutti i brand in Valid_Trademarks.txt
 """
 
+from __future__ import annotations  # compatibilità Python 3.9 (sintassi "X | None")
+
 import os
 import re
 import time

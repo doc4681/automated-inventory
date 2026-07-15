@@ -34,6 +34,14 @@ if ! ./.venv/bin/python -c "import streamlit" 2>/dev/null; then
   ./.venv/bin/python -m pip install -r requirements.txt
 fi
 
+# ── Evita la domanda dell'email al primo avvio di Streamlit ─────────────────
+# Senza questo, al primo avvio Streamlit chiede un'email nel Terminale e
+# resta bloccato in attesa: il pannello non si apre.
+mkdir -p "$HOME/.streamlit"
+if [[ ! -f "$HOME/.streamlit/credentials.toml" ]]; then
+  printf '[general]\nemail = ""\n' > "$HOME/.streamlit/credentials.toml"
+fi
+
 echo ""
 echo "✅ Apro il pannello nel browser… (lascia aperta questa finestra)"
 echo "   Se non si apre da solo, vai su:  http://localhost:8501"

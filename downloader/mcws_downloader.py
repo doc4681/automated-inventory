@@ -10,6 +10,8 @@ Uso:
   python downloader/mcws_downloader.py
 """
 
+from __future__ import annotations  # compatibilità Python 3.9 (sintassi "X | None")
+
 import os
 import re
 import subprocess

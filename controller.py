@@ -7,6 +7,8 @@ background + lettura log, gestione scheduling launchd (genera il plist per la ma
 corrente), ultimo risultato.
 """
 
+from __future__ import annotations  # compatibilità Python 3.9 (sintassi "X | None")
+
 import os
 import re
 import json
