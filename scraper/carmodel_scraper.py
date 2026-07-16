@@ -121,8 +121,10 @@ def get_page_soup(driver: uc.Chrome, url: str) -> BeautifulSoup | None:
     except WebDriverException as e:
         print(f"  ERRORE navigazione ({type(e).__name__}): {url}")
         return None
-    # Attesa Cloudflare challenge (max 30s)
-    for _ in range(15):
+    # Attesa Cloudflare challenge (default 60s, override con env CARMODEL_CF_WAIT).
+    # Su Mac lenti/Intel il CF ci mette di più: meglio abbondare.
+    cf_iters = max(5, int(os.environ.get("CARMODEL_CF_WAIT", "60")) // 2)
+    for _ in range(cf_iters):
         time.sleep(2)
         try:
             title = driver.title
@@ -216,6 +218,10 @@ def last_page_number(soup: BeautifulSoup) -> int:
     )
 
 
+class PageLoadError(Exception):
+    """Pagina 1 di un brand non caricata (di solito Cloudflare): ritentabile con sessione nuova."""
+
+
 def scrape_trademark(driver: uc.Chrome, trademark: str) -> list[dict]:
     slug = trademark.lower().replace(" ", "-")
     base = f"{BASE_URL}/trademark/{slug}"
@@ -223,8 +229,8 @@ def scrape_trademark(driver: uc.Chrome, trademark: str) -> list[dict]:
 
     soup = get_page_soup(driver, base)
     if soup is None:
-        print(f"  {trademark}: impossibile caricare pagina 1, skip.")
-        return []
+        # CF non superato / pagina non caricata → ritentabile da main() con sessione nuova
+        raise PageLoadError(trademark)
 
     # Controlla 404 (titolo o assenza di articoli)
     cards = soup.find_all("article", class_="prod-card")
@@ -269,17 +275,24 @@ def main():
                 print(f"\n  [Chrome] restart preventivo dopo {i} brand...")
                 driver = restart_driver(driver)
 
-            # Tenta lo scraping con max 2 tentativi su crash di sessione
-            for attempt in range(1, 3):
+            # Tenta lo scraping con max 3 tentativi (crash sessione o CF non superato):
+            # ogni volta si riparte con Chrome nuovo, che spesso passa il Cloudflare.
+            MAX_TRIES = 3
+            for attempt in range(1, MAX_TRIES + 1):
                 try:
                     results = scrape_trademark(driver, tm)
                     all_products.extend(results)
                     break
-                except (InvalidSessionIdException, NoSuchWindowException) as e:
-                    print(f"  [Chrome] crash ({type(e).__name__}) su {tm}, tentativo {attempt}/2")
+                except PageLoadError:
+                    print(f"  [CF] {tm}: pagina non caricata, tentativo {attempt}/{MAX_TRIES} — riavvio sessione")
                     driver = restart_driver(driver)
-                    if attempt == 2:
-                        print(f"  {tm}: skip dopo 2 crash.")
+                    if attempt == MAX_TRIES:
+                        print(f"  {tm}: skip dopo {MAX_TRIES} tentativi (Cloudflare).")
+                except (InvalidSessionIdException, NoSuchWindowException) as e:
+                    print(f"  [Chrome] crash ({type(e).__name__}) su {tm}, tentativo {attempt}/{MAX_TRIES}")
+                    driver = restart_driver(driver)
+                    if attempt == MAX_TRIES:
+                        print(f"  {tm}: skip dopo {MAX_TRIES} crash.")
 
             if not args.test:
                 time.sleep(SLEEP)

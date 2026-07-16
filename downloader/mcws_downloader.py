@@ -47,6 +47,10 @@ from selenium.common.exceptions import (
     NoSuchWindowException, InvalidSessionIdException, WebDriverException,
 )
 
+
+class CFTimeout(Exception):
+    """Cloudflare non superato nei tempi: ritentabile con una sessione Chrome nuova."""
+
 LOGIN_URL = "https://www.modelcarswholesale.com/it/login"
 DOWNLOAD_URL = "https://www.modelcarswholesale.com/downloadStocklistCsv"
 LOGOUT_URL = "https://www.modelcarswholesale.com/logout"
@@ -106,8 +110,10 @@ def download_once(username: str, password: str, output_file: Path) -> None:
         print(f"Navigazione verso {LOGIN_URL}")
         driver.get(LOGIN_URL)
 
-        # Attesa Cloudflare challenge (max 60s)
-        for i in range(30):
+        # Attesa Cloudflare challenge (default 120s, override con env MCWS_CF_TIMEOUT).
+        # Su Mac lenti/Intel il CF ci mette di più: se scade, main() ritenta con sessione nuova.
+        cf_secs = int(os.environ.get("MCWS_CF_TIMEOUT", "120"))
+        for i in range(cf_secs // 2):
             time.sleep(2)
             title = driver.title
             if "Just a moment" not in title and "Ci siamo quasi" not in title:
@@ -116,7 +122,7 @@ def download_once(username: str, password: str, output_file: Path) -> None:
             if (i + 1) % 5 == 0:
                 print(f"  Attesa CF... {(i+1)*2}s")
         else:
-            raise SystemExit("ERRORE: Cloudflare challenge non risolto dopo 60s")
+            raise CFTimeout(f"Cloudflare challenge non risolto dopo {cf_secs}s")
 
         # Compila form di login
         wait = WebDriverWait(driver, 10)
@@ -174,13 +180,13 @@ def main():
         try:
             download_once(username, password, output_file)
             break
-        except (NoSuchWindowException, InvalidSessionIdException) as e:
-            print(f"  [Chrome] sessione persa ({type(e).__name__}) — tentativo {attempt}/{MAX_ATTEMPTS}, riprovo")
+        except (NoSuchWindowException, InvalidSessionIdException, CFTimeout) as e:
+            motivo = "Cloudflare non superato" if isinstance(e, CFTimeout) else "finestra Chrome instabile"
+            print(f"  [retry] {motivo} — tentativo {attempt}/{MAX_ATTEMPTS}, riprovo con sessione nuova")
             time.sleep(3)
             if attempt == MAX_ATTEMPTS:
                 raise SystemExit(
-                    f"ERRORE: download MCWS fallito dopo {MAX_ATTEMPTS} tentativi "
-                    "(finestra Chrome instabile)")
+                    f"ERRORE: download MCWS fallito dopo {MAX_ATTEMPTS} tentativi ({motivo})")
 
     # Statistiche CSV
     lines = output_file.read_text(encoding="utf-8", errors="replace").splitlines()
