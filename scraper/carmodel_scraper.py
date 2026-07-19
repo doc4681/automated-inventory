@@ -90,14 +90,37 @@ def chrome_major_version() -> int | None:
     return None
 
 
-def make_driver() -> uc.Chrome:
+# Chromedriver già scaricato e "patchato" da undetected-chromedriver.
+# Riusarlo evita che uc contatti internet a OGNI avvio di Chrome: su alcune reti
+# quella richiesta viene rifiutata (ConnectionRefused) e fa fallire tutta la run.
+UC_CACHED_DRIVER = (Path.home() / "Library" / "Application Support"
+                    / "undetected_chromedriver" / "undetected_chromedriver")
+
+
+def make_driver(retries: int = 3) -> uc.Chrome:
     # Headless opt-in via env CARMODEL_HEADLESS=1.
     # NB: in headless undetected-chromedriver viene piu' spesso bloccato da
     # Cloudflare; default = finestra visibile (piu' affidabile).
     headless = os.environ.get("CARMODEL_HEADLESS", "0") == "1"
     vmain = chrome_major_version()
-    print(f"  [Chrome] avvio sessione (headless={headless}, version_main={vmain})...")
-    return uc.Chrome(headless=headless, use_subprocess=True, version_main=vmain)
+    last_err = None
+    for attempt in range(1, retries + 1):
+        # 1° tentativo: riusa il driver in cache (nessuna chiamata di rete).
+        # Se fallisce (es. Chrome aggiornato), riprova lasciando che uc lo riscarichi.
+        kwargs = dict(headless=headless, use_subprocess=True, version_main=vmain)
+        if attempt == 1 and UC_CACHED_DRIVER.exists():
+            kwargs["driver_executable_path"] = str(UC_CACHED_DRIVER)
+            note = " [driver in cache]"
+        else:
+            note = ""
+        try:
+            print(f"  [Chrome] avvio sessione (headless={headless}, version_main={vmain}){note}...")
+            return uc.Chrome(**kwargs)
+        except Exception as e:
+            last_err = e
+            print(f"  [Chrome] avvio fallito ({type(e).__name__}) — tentativo {attempt}/{retries}")
+            time.sleep(5 * attempt)
+    raise RuntimeError(f"Impossibile avviare Chrome dopo {retries} tentativi: {last_err}")
 
 
 def restart_driver(driver: uc.Chrome) -> uc.Chrome:
@@ -275,19 +298,21 @@ def main():
                 print(f"\n  [Chrome] restart preventivo dopo {i} brand...")
                 driver = restart_driver(driver)
 
-            # Tenta lo scraping con max 3 tentativi (crash sessione o CF non superato):
-            # ogni volta si riparte con Chrome nuovo, che spesso passa il Cloudflare.
-            MAX_TRIES = 3
+            # Ritentativi: su CF meglio ASPETTARE che riavviare a raffica
+            # (i riavvii insospettiscono Cloudflare e forzano chiamate di rete).
+            MAX_TRIES = 2
             for attempt in range(1, MAX_TRIES + 1):
                 try:
                     results = scrape_trademark(driver, tm)
                     all_products.extend(results)
                     break
                 except PageLoadError:
-                    print(f"  [CF] {tm}: pagina non caricata, tentativo {attempt}/{MAX_TRIES} — riavvio sessione")
-                    driver = restart_driver(driver)
-                    if attempt == MAX_TRIES:
-                        print(f"  {tm}: skip dopo {MAX_TRIES} tentativi (Cloudflare).")
+                    if attempt < MAX_TRIES:
+                        pausa = int(os.environ.get("CF_COOLDOWN", "30"))
+                        print(f"  [CF] {tm}: non caricata — attendo {pausa}s e riprovo (stessa sessione)")
+                        time.sleep(pausa)
+                    else:
+                        print(f"  {tm}: skip (Cloudflare non superato).")
                 except (InvalidSessionIdException, NoSuchWindowException) as e:
                     print(f"  [Chrome] crash ({type(e).__name__}) su {tm}, tentativo {attempt}/{MAX_TRIES}")
                     driver = restart_driver(driver)

@@ -51,6 +51,11 @@ from selenium.common.exceptions import (
 class CFTimeout(Exception):
     """Cloudflare non superato nei tempi: ritentabile con una sessione Chrome nuova."""
 
+
+# Chromedriver già scaricato e "patchato": riusarlo evita chiamate di rete a ogni avvio.
+UC_CACHED_DRIVER = (Path.home() / "Library" / "Application Support"
+                    / "undetected_chromedriver" / "undetected_chromedriver")
+
 LOGIN_URL = "https://www.modelcarswholesale.com/it/login"
 DOWNLOAD_URL = "https://www.modelcarswholesale.com/downloadStocklistCsv"
 LOGOUT_URL = "https://www.modelcarswholesale.com/logout"
@@ -96,8 +101,21 @@ def make_driver() -> uc.Chrome:
     # default = finestra visibile (download affidabile).
     headless = os.environ.get("MCWS_HEADLESS", "0") == "1"
     vmain = chrome_major_version()
-    print(f"Avvio Chrome (undetected, headless={headless}, version_main={vmain})...")
-    return uc.Chrome(headless=headless, use_subprocess=True, options=options, version_main=vmain)
+    last_err = None
+    for attempt in range(1, 4):
+        # 1° tentativo con il driver in cache: evita che uc contatti internet
+        # (su alcune reti la richiesta viene rifiutata e fa fallire la run).
+        kwargs = dict(headless=headless, use_subprocess=True, options=options, version_main=vmain)
+        if attempt == 1 and UC_CACHED_DRIVER.exists():
+            kwargs["driver_executable_path"] = str(UC_CACHED_DRIVER)
+        try:
+            print(f"Avvio Chrome (undetected, headless={headless}, version_main={vmain})...")
+            return uc.Chrome(**kwargs)
+        except Exception as e:
+            last_err = e
+            print(f"  [Chrome] avvio fallito ({type(e).__name__}) — tentativo {attempt}/3")
+            time.sleep(5 * attempt)
+    raise CFTimeout(f"Impossibile avviare Chrome: {last_err}")
 
 
 def download_once(username: str, password: str, output_file: Path) -> None:
