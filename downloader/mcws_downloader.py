@@ -44,7 +44,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
-    NoSuchWindowException, InvalidSessionIdException, WebDriverException,
+    NoSuchWindowException, InvalidSessionIdException, WebDriverException, TimeoutException,
 )
 
 
@@ -142,9 +142,34 @@ def download_once(username: str, password: str, output_file: Path) -> None:
         else:
             raise CFTimeout(f"Cloudflare challenge non risolto dopo {cf_secs}s")
 
-        # Compila form di login
-        wait = WebDriverWait(driver, 10)
-        wait.until(EC.presence_of_element_located((By.ID, "username")))
+        # Attende il form di login. A volte Cloudflare, dopo il challenge, reindirizza
+        # a un'altra pagina (es. la home): in quel caso il campo "username" non c'è.
+        # Allora ri-navighiamo esplicitamente al login (ora col lasciapassare CF).
+        form_wait = int(os.environ.get("MCWS_FORM_WAIT", "30"))
+
+        def _wait_username():
+            WebDriverWait(driver, form_wait).until(
+                EC.presence_of_element_located((By.ID, "username")))
+
+        try:
+            _wait_username()
+        except TimeoutException:
+            print(f"  Form login non trovato (url={driver.current_url}, titolo={driver.title!r}) — ri-navigo")
+            driver.get(LOGIN_URL)
+            time.sleep(3)
+            try:
+                _wait_username()
+            except TimeoutException:
+                try:
+                    campi = driver.execute_script(
+                        "return Array.from(document.querySelectorAll('input'))"
+                        ".map(i=>i.id+'/'+i.name+'/'+i.type)")
+                except Exception:
+                    campi = "?"
+                print(f"  Campi input nella pagina: {campi}")
+                # Ritentabile: main() riprova con una sessione Chrome nuova
+                raise CFTimeout("form di login MCWS non caricato")
+
         driver.find_element(By.ID, "username").send_keys(username)
         driver.find_element(By.ID, "password").send_keys(password)
         driver.find_element(By.CSS_SELECTOR, "button[type=submit], input[type=submit]").click()
