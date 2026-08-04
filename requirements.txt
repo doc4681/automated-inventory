@@ -1,6 +1,12 @@
 # Inventory Sync WebApp
 # Requisiti per deployment su Streamlit Community Cloud
 
+# Python 3.12+ ha rimosso distutils dalla stdlib e i venv nuovi NON installano
+# più setuptools di default. undetected-chromedriver importa ancora distutils
+# (fornito da setuptools): senza questa riga scraper/downloader crashano
+# all'avvio con "ModuleNotFoundError: No module named 'distutils'".
+setuptools>=68
+
 streamlit>=1.28.0
 pandas>=2.0.0
 xlrd>=2.0.0

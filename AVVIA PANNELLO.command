@@ -34,6 +34,16 @@ if ! ./.venv/bin/python -c "import streamlit" 2>/dev/null; then
   ./.venv/bin/python -m pip install -r requirements.txt
 fi
 
+# ── Ripara i venv già esistenti creati con Python 3.12+ ─────────────────────
+# In Python 3.12+ distutils è stato rimosso e i venv nuovi non hanno setuptools.
+# undetected-chromedriver lo richiede: senza, scraper/downloader crashano
+# ("No module named 'distutils'"). Reinstalliamo setuptools SENZA ricreare
+# il venv (nessun dato perso), utile per chi ha già installato l'app.
+if ! ./.venv/bin/python -c "import distutils" 2>/dev/null; then
+  echo "▶ Installo un componente mancante (setuptools)…"
+  ./.venv/bin/python -m pip install "setuptools>=68" >/dev/null 2>&1
+fi
+
 # ── Evita la domanda dell'email al primo avvio di Streamlit ─────────────────
 # Senza questo, al primo avvio Streamlit chiede un'email nel Terminale e
 # resta bloccato in attesa: il pannello non si apre.
