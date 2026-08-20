@@ -170,14 +170,49 @@ def download_once(username: str, password: str, output_file: Path) -> None:
                 # Ritentabile: main() riprova con una sessione Chrome nuova
                 raise CFTimeout("form di login MCWS non caricato")
 
-        driver.find_element(By.ID, "username").send_keys(username)
-        driver.find_element(By.ID, "password").send_keys(password)
+        # Diagnostica SICURA (non stampa la password): se il login viene rifiutato
+        # serve capire se le credenziali sono arrivate vuote/corrotte dall'ambiente.
+        mask = (username[:2] + "…" + username[-2:]) if len(username) > 4 else "(corta)"
+        print(f"  Credenziali caricate: utente='{mask}' (len {len(username)}), password len {len(password)}")
+        if not username or not password:
+            raise SystemExit(
+                "ERRORE: MCWS_USERNAME o MCWS_PASSWORD VUOTI — controlla credenziali.env "
+                "(campi tra virgolette, senza spazi).")
+
+        u = driver.find_element(By.ID, "username"); u.clear(); u.send_keys(username)
+        p = driver.find_element(By.ID, "password"); p.clear(); p.send_keys(password)
+        # Verifica che i campi contengano davvero i valori (JS a volte li resetta / la
+        # pagina non era pronta): se no, riscrive una volta prima di inviare.
+        try:
+            got_u = driver.execute_script("return (document.getElementById('username')||{}).value") or ""
+            got_p = driver.execute_script("return (document.getElementById('password')||{}).value") or ""
+        except Exception:
+            got_u = got_p = ""
+        if len(got_u) != len(username) or len(got_p) != len(password):
+            print(f"  Campi non riempiti bene (utente {len(got_u)}/{len(username)}, "
+                  f"pw {len(got_p)}/{len(password)}) — riscrivo")
+            time.sleep(1)
+            u.clear(); u.send_keys(username)
+            p.clear(); p.send_keys(password)
         driver.find_element(By.CSS_SELECTOR, "button[type=submit], input[type=submit]").click()
         time.sleep(3)
         print(f"Post-login URL: {driver.current_url}")
 
         if "/login" in driver.current_url or "/signin" in driver.current_url:
-            raise SystemExit("ERRORE: login fallito — controlla le credenziali")
+            # Prova a leggere il messaggio d'errore mostrato dal sito, per sapere il motivo.
+            try:
+                msg = driver.execute_script(
+                    "var el=document.querySelector("
+                    "'.alert,.alert-danger,.error,.invalid-feedback,.help-block,[role=alert]');"
+                    "return el?el.innerText.trim().slice(0,200):''") or ""
+            except Exception:
+                msg = ""
+            hint = f"\n  Messaggio dal sito: {msg!r}" if msg else ""
+            raise SystemExit(
+                "ERRORE: login rifiutato da MCWS (username/password non accettati)." + hint +
+                "\n  Controlla in credenziali.env: (1) nessuno spazio prima/dopo il valore; "
+                "(2) usa le virgolette SINGOLE se la password ha $ ` \\ o \"; "
+                "(3) niente virgolette 'intelligenti' da copia-incolla; (4) valori esatti.")
 
         # Download CSV direttamente con Chrome (bypassa CF)
         print(f"Download da {DOWNLOAD_URL}...")
@@ -214,8 +249,10 @@ def download_once(username: str, password: str, output_file: Path) -> None:
 
 
 def main():
-    username = os.environ["MCWS_USERNAME"]
-    password = os.environ["MCWS_PASSWORD"]
+    # .strip(): toglie spazi/newline accidentali (copia-incolla) che farebbero
+    # fallire il login pur avendo "la password giusta".
+    username = os.environ.get("MCWS_USERNAME", "").strip()
+    password = os.environ.get("MCWS_PASSWORD", "").strip()
     output_file = get_output_file()
 
     MAX_ATTEMPTS = 3
