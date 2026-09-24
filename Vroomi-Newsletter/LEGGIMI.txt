@@ -13,6 +13,8 @@ pubblichi tu da Shopify.
 
 COSA SERVE SUL MAC
 ──────────────────
+• Va bene sia un Mac Intel sia un Mac Apple Silicon (M1…M4): il programma
+  sceglie da solo il componente giusto per Chrome.
 • Google Chrome installato (https://www.google.com/chrome/)
 • Python 3.10 o più recente (https://www.python.org/downloads/ — pulsante
   giallo). Per sapere se c'è già: apri Terminale e scrivi  python3 --version
@@ -71,7 +73,7 @@ Se Chrome si blocca, il programma riparte da solo con una sessione nuova.
 DOVE FINISCONO LE SCHEDE
 ────────────────────────
 Su Shopify come BOZZA:
-https://admin.shopify.com/store/vroomimodels/products
+https://admin.shopify.com/store/scn8p4-h7/products
 Un riepilogo di ogni run è salvato nella cartella  output/  (file report_...csv).
 
 

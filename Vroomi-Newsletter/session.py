@@ -18,11 +18,12 @@ from __future__ import annotations
 import os
 import re
 import time
-import subprocess
 from pathlib import Path
 
 import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
+
+from chrome import new_chrome
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -32,12 +33,6 @@ from selenium.common.exceptions import (
 )
 
 BASE_URL = "https://www.modelcarswholesale.com"
-
-# Chromedriver gia' scaricato e "patchato": riusarlo evita chiamate di rete a
-# ogni avvio (su alcune reti la richiesta viene rifiutata e fa fallire la run).
-UC_CACHED_DRIVER = (Path.home() / "Library" / "Application Support"
-                    / "undetected_chromedriver" / "undetected_chromedriver")
-
 
 class CFTimeout(Exception):
     """Cloudflare non superato / form login non caricato: ritentabile con una
@@ -50,13 +45,16 @@ def _load_env_file(path: Path) -> None:
     if not path.exists():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
-        m = re.match(r'\s*(?:export\s+)?([A-Z_]+)\s*=\s*"?([^"]*)"?\s*$', line)
+        # accetta valori tra virgolette doppie, singole o senza virgolette
+        m = re.match(r"""\s*(?:export\s+)?([A-Z_]+)\s*=\s*(["']?)(.*?)\2\s*$""", line)
         if m:
-            os.environ.setdefault(m.group(1), m.group(2))
+            os.environ.setdefault(m.group(1), m.group(3))
 
 
 def get_credentials() -> tuple[str, str]:
-    _load_env_file(Path(__file__).parent / "credenziali.env")  # file locale (portabile)
+    here = Path(__file__).parent
+    _load_env_file(here / "credenziali.env")          # cartella da sola (zip per Giuliano)
+    _load_env_file(here.parent / "credenziali.env")   # dentro automated-inventory
     _load_env_file(Path.home() / ".env.vroomi")
     user = os.environ.get("MCWS_USERNAME", "").strip()
     pwd = os.environ.get("MCWS_PASSWORD", "").strip()
@@ -68,43 +66,15 @@ def get_credentials() -> tuple[str, str]:
 
 
 # ── driver ───────────────────────────────────────────────────────────────────
-def _chrome_major() -> int | None:
-    env = os.environ.get("CHROME_MAJOR")
-    if env and env.isdigit():
-        return int(env)
-    for path in (
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
-    ):
-        try:
-            out = subprocess.check_output([path, "--version"], text=True, timeout=10)
-            m = re.search(r"\b(\d+)\.", out)
-            if m:
-                return int(m.group(1))
-        except Exception:
-            continue
-    return None
-
-
 def make_driver(headless: bool | None = None) -> uc.Chrome:
+    """Chrome undetected con il chromedriver giusto per questo Mac (Intel o
+    Apple Silicon): vedi chrome.py."""
     if headless is None:
         headless = os.environ.get("MCW_HEADLESS", "0") == "1"
-    vmain = _chrome_major()
-    last_err = None
-    for attempt in range(1, 4):
-        kwargs = dict(headless=headless, use_subprocess=True, version_main=vmain)
-        # 1° tentativo con il driver in cache: evita che uc contatti internet.
-        if attempt == 1 and UC_CACHED_DRIVER.exists():
-            kwargs["driver_executable_path"] = str(UC_CACHED_DRIVER)
-        try:
-            print(f"  [Chrome] avvio (headless={headless}, version_main={vmain}, "
-                  f"tentativo {attempt}/3)...", flush=True)
-            return uc.Chrome(**kwargs)
-        except Exception as e:
-            last_err = e
-            print(f"  [Chrome] avvio fallito ({type(e).__name__}) — riprovo", flush=True)
-            time.sleep(5 * attempt)
-    raise CFTimeout(f"Impossibile avviare Chrome dopo 3 tentativi: {last_err}")
+    try:
+        return new_chrome(headless=headless)
+    except RuntimeError as e:
+        raise CFTimeout(str(e)) from e
 
 
 # ── Cloudflare / navigazione ─────────────────────────────────────────────────

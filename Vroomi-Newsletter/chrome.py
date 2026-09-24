@@ -1,9 +1,10 @@
 """
-chrome.py — avvio di Chrome "undetected" (per superare Cloudflare), condiviso da
-scraper carmodel e downloader MCWS. Funziona su Mac Apple Silicon e Intel.
+chrome.py — avvio di Chrome "undetected" (per superare Cloudflare).
+Funziona sia su Mac Apple Silicon (M1-M4) sia su Mac Intel.
 
-NB: Vroomi-Newsletter/chrome.py ne è una copia identica (quella cartella deve
-funzionare anche da sola): se cambi questo file, copia la modifica anche lì.
+NB: è una COPIA identica di automated-inventory/pipeline/chrome.py, perché questa
+cartella deve funzionare anche da sola (zip per Giuliano). Se ne cambi una,
+copia la modifica anche nell'altra.
 
 Perché esiste: undetected-chromedriver 3.5.5 scarica SEMPRE il chromedriver per
 Mac Intel (mac-x64), anche sui Mac Apple Silicon (M1/M2/M3/M4). Senza Rosetta

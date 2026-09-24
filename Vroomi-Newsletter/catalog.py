@@ -1,9 +1,12 @@
 """
 catalog.py — anagrafica brand: trademark validi, markup per brand, calcolo prezzo.
 
-File sorgente (mantenuti in ~/automated-inventory):
+File sorgente:
   Valid_Trademarks.txt   un brand per riga (stile UPPER/hyphen, es. OTTO-MOBILE)
   Vroomi_Markup.txt       'Brand<TAB o spazi>Markup%'  (es. 'Otto Mobile\t1,50')
+Dentro automated-inventory vale la copia unica in ../config/ (la stessa usata da
+pipeline e pannello). Le copie in questa cartella servono solo quando la cartella
+gira da sola (zip per Giuliano).
 
 Matching brand robusto: si normalizza a chiave "compatta" (solo alfanumerici,
 maiuscolo), cosi' 'OTTO-MOBILE' == 'Otto Mobile' e 'TOPMARQUES' == 'Top Marques'.
@@ -25,9 +28,9 @@ def _find_file(name: str) -> Path:
         candidates.append(Path(env))
     here = Path(__file__).parent
     candidates += [
-        here / name,
-        here.parent / name,
-        Path.home() / "automated-inventory" / name,
+        here.parent / "config" / name,                        # dentro automated-inventory
+        here / name,                                          # cartella da sola (zip)
+        Path.home() / "automated-inventory" / "config" / name,
     ]
     for p in candidates:
         if p.exists():
@@ -129,8 +132,22 @@ def round_90(value: float) -> float:
     return round(euros + 1 + 0.90, 2)
 
 
+# Stesse soglie del pannello (pannello/logic_v03.py): i modelli economici hanno
+# un ricarico più alto. Così il prezzo non cambia al primo "Adeguamento Markup".
+COST_THRESHOLD_LOW, MARKUP_LOW = 10.0, 2.2
+COST_THRESHOLD_MID, MARKUP_MID = 20.0, 1.9
+
+
+def effective_markup(cost: float, brand_markup: float) -> float:
+    if cost < COST_THRESHOLD_LOW:
+        return MARKUP_LOW
+    if cost < COST_THRESHOLD_MID:
+        return MARKUP_MID
+    return brand_markup
+
+
 def compute_price(cost: float, markup: float, style: str = "90") -> float:
-    raw = cost * markup
+    raw = cost * effective_markup(cost, markup)
     if style == "90":
         return round_90(raw)
     return round(raw, 2)

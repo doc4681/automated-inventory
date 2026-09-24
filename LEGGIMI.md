@@ -33,10 +33,10 @@ Durante la run si apre una finestra di Chrome: è normale (serve a superare Clou
 | `credenziali.env` | Login MCWS e Shopify (mai condividerlo) | ✏️ solo se cambiano le password |
 | `logs/` | Un log per ogni run (`run_<data>.log`) | 🔍 solo se qualcosa va storto |
 | `dati/` | File intermedi e storico (ultimi 15 per tipo, pulizia automatica) | ❌ |
-| `pipeline/` | Il motore: scraper, downloader, merge, Shopify, newsletter, `run.sh` | ❌ |
+| `pipeline/` | Il motore: scraper, downloader, merge, Shopify, `run.sh` | ❌ |
 | `pannello/` | Il codice del pannello (e della scheda "Sync inventario") | ❌ |
 | `app.py`, `requirements.txt`, `.venv/` | Avvio pannello e dipendenze Python | ❌ |
-| `Vroomi-Newsletter/` | Pacchetto newsletter per il collaboratore (vedi sotto), con i suoi 3 script | ✅ se lo usi |
+| `Vroomi-Newsletter/` | Newsletter MCWS → bozze Shopify (vedi sotto): usato dal pannello e da Giuliano | ✅ |
 | `_archivio/` | Roba vecchia, non usata. Si può cancellare. | ❌ |
 
 ## ⚙️ Come funziona (i 4 passi di `pipeline/run.sh`)
@@ -56,31 +56,30 @@ Se a quell'ora il Mac dorme, parte appena si risveglia; se è spento, salta a qu
 
 ## 📰 Newsletter MCWS → nuovi prodotti Shopify
 
-Su modelcarswholesale.com la colonna **"Recent Newsletters"** elenca le newsletter
-(es. *24-09-2026 - MR-MODELS*), ognuna con i prodotti nuovi. Dal pannello:
+Un solo programma: la cartella **`Vroomi-Newsletter/`**. Legge le newsletter di
+modelcarswholesale.com (colonna **"Recent Newsletters"**, es. *24-09-2026 - BURAGO*), tiene
+solo i marchi in `Valid_Trademarks.txt` **con un ricarico** in `Vroomi_Markup.txt`, e crea
+su Shopify in **BOZZA** i prodotti che non ci sono ancora. Funziona su Mac **Intel e Apple Silicon**.
 
-1. Scegli **quale newsletter** (1 = la più recente, 2 = la seconda…).
-2. **🔍 Prova**: si apre Chrome, entra su MCWS e mostra nel log, per ogni prodotto,
-   come verrebbe creato su Shopify (titolo, SKU, prezzo, foto, campi). **Non scrive nulla.**
-3. Se va bene, **🛍️ Crea su Shopify in BOZZA**: crea i prodotti che non esistono ancora.
-   Sono **bozze**: controllale su Shopify e pubblicale tu.
+Due modi di usarlo, stesso programma:
+- **Pannello** → sezione 📰: scrivi l'ID della newsletter (es. `15538`, il numero nel suo link;
+  vuoto = tutte), premi **🔍 Prova** (non scrive nulla) e poi **🛍️ Crea su Shopify in BOZZA**.
+- **Script con doppio click** dentro `Vroomi-Newsletter/` (quelli che usa Giuliano):
+  `1 - PROVA`, `2 - CREA SCHEDE DRAFT` (tutte), `3 - CREA UNA NEWSLETTER` (per ID).
+  Istruzioni in `Vroomi-Newsletter/LEGGIMI.txt`.
 
-Come viene costruito il prodotto (uguale a quelli che hai già):
-- SKU = codice produttore, barcode = ID MCWS, costo = prezzo netto MCWS
-- prezzo = stesse regole della scheda Sync (costo <10€ ×2,2; <20€ ×1,9; altrimenti
-  ricarico del marchio in `config/Vroomi_Markup.txt`, default 1,50) arrotondato a ,90
-- foto grandi, materiale e note da carmodel; categoria (ROAD CARS, RACING CARS…) presa dai
-  prodotti simili già sul negozio, altrimenti dedotta dal titolo — il log dice quale
-- I prodotti già presenti (stesso SKU o barcode) vengono saltati: rilanciare è sicuro.
+La scheda creata è come quelle già in negozio: titolo `MARCA AUTO - DESCRIZIONE`, SKU = codice
+produttore, barcode = ID MCWS, costo = prezzo netto, prezzo = costo × ricarico (sotto 10 € ×2,2,
+sotto 20 € ×1,9) arrotondato a ,90, foto grande, materiale e note dalla scheda MCWS, campi
+`custom.*` (per i modelli da corsa anche evento, pilota e sottocategoria). I prodotti già presenti
+(stesso SKU o barcode) vengono saltati: rilanciare è sicuro.
 
-Da Terminale: `bash pipeline/newsletter.sh --list` (elenco), `--index 1` (prova),
-`--index 1 --apply` (crea). Report di ogni run in `dati/newsletter/`, log in `logs/newsletter_*.log`.
+⚠️ Un marchio **senza ricarico** in `config/Vroomi_Markup.txt` viene saltato (es. MR-MODELS):
+aggiungi la riga del ricarico e rilancia.
 
-> ⚠️ Esiste anche la cartella **`Vroomi-Newsletter/`**: pacchetto autonomo per il collaboratore
-> (script `1 - PROVA`, `2 - CREA SCHEDE DRAFT`, `3 - CREA UNA NEWSLETTER`, istruzioni in
-> `Vroomi-Newsletter/LEGGIMI.txt`, credenziali in `Vroomi-Newsletter/credenziali.env`).
-> Fa lo stesso lavoro con regole in parte diverse (titolo con "|", barcode vuoto):
-> **da unificare** — vedi la PR.
+Dentro questo progetto usa `config/` e `credenziali.env` della cartella principale. Per dare lo
+strumento a Giuliano basta zippare **solo** la cartella `Vroomi-Newsletter/`, senza `.venv/` e `output/` (ha le sue
+copie di marchi/ricarichi; `credenziali.env` va compilato sul suo Mac partendo da `credenziali.esempio.env`).
 
 ## 🛍️ Shopify (opzionale): note → metafield `custom.notes`
 

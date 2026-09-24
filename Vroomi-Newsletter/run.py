@@ -154,7 +154,8 @@ def parse_racing(description: str) -> dict:
 
 def build_payload(p: scraper.Product, cat: catalog.Catalog) -> dict:
     vendor = cat.vendor_for(p.trademark)
-    title = f"{p.brand_auto} | {p.description}".strip(" |") if p.brand_auto else p.description
+    # Stesso formato dei prodotti già in negozio: "MARCA AUTO - DESCRIZIONE"
+    title = f"{p.brand_auto} - {p.description}" if p.brand_auto else p.description
     ptype = product_type_for(title)
     stag = scale_tag(p.scale)
 
@@ -166,8 +167,7 @@ def build_payload(p: scraper.Product, cat: catalog.Catalog) -> dict:
 
     tags = []
     subcat_tag = {"FORMULA 1": "F1", "ENDURANCE": "ENDURANCE"}.get(subcat, "")
-    for t in [stag, f"brand_{p.brand_auto.lower()}" if p.brand_auto else "",
-              p.brand_auto.upper(), vendor, ptype, subcat_tag]:
+    for t in [stag, p.brand_auto.upper(), vendor, ptype, subcat_tag]:
         if t and t not in tags:
             tags.append(t)
 
@@ -197,6 +197,7 @@ def build_payload(p: scraper.Product, cat: catalog.Catalog) -> dict:
 
     markup = cat.markup_for(p.trademark)
     price = catalog.compute_price(p.cost, markup)
+    nice = " ".join(w.capitalize() for w in f"{p.brand_auto} {car_model} {year}".split())
 
     return {
         "title": title,
@@ -206,12 +207,17 @@ def build_payload(p: scraper.Product, cat: catalog.Catalog) -> dict:
         "description_html": "-",          # come i prodotti Vroomi: info nei metafield
         "metafields": metafields,
         "sku": p.sku,
-        "barcode": "",
+        "barcode": p.site_id,             # come i prodotti Vroomi: barcode = ID MCWS
         "price": f"{price:.2f}",
+        "cost": f"{p.cost:.2f}",
+        "seo": {"title": f"{nice} Scale Model Car",
+                "description": f"{nice} scale model car. Detailed replica for collectors. "
+                               "Available at Vroomi."},
         "image_url": p.image_url,
+        "image_alt": f"{nice} {stag} scale model car by {vendor} — Vroomi",
         # meta per report
         "_cost": p.cost,
-        "_markup": markup,
+        "_markup": catalog.effective_markup(p.cost, markup),
         "_trademark": p.trademark,
         "_car_model": car_model,
         "_year": year,
@@ -348,11 +354,11 @@ def main() -> int:
                 status = "DRY-RUN"
                 admin_url = ""
                 if sh is not None:
-                    dup = sh.find_variant_by_sku(p.sku)
+                    dup = sh.find_variant_by_sku(p.sku, p.site_id)
                     if dup:
                         existing += 1
                         status = "ESISTE"
-                        admin_url = dup["productId"]
+                        admin_url = sh.admin_url(dup["productId"])
                     elif args.apply:
                         try:
                             res = sh.create_draft_product(payload)
