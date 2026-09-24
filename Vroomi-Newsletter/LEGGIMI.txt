@@ -1,0 +1,85 @@
+╔════════════════════════════════════════════════════════════════════╗
+║        VROOMI — da Newsletter modelcarswholesale a Shopify           ║
+╚════════════════════════════════════════════════════════════════════╝
+
+A COSA SERVE
+────────────
+Legge le "Newsletter recenti" di modelcarswholesale.com, tiene solo i brand
+che vendiamo, e per ogni prodotto crea una scheda BOZZA (DRAFT) su Shopify
+Vroomi, con prezzo = costo × markup e tutte le info nei campi giusti.
+Le schede NON vengono pubblicate: restano in bozza, le controlli e le
+pubblichi tu da Shopify.
+
+
+COSA SERVE SUL MAC
+──────────────────
+• Google Chrome installato (https://www.google.com/chrome/)
+• Python 3 installato (https://www.python.org/downloads/ — pulsante giallo)
+  Per sapere se c'è già: apri Terminale e scrivi  python3 --version
+
+
+PRIMA VOLTA — 3 PASSI
+─────────────────────
+1) CREDENZIALI — già pronte.
+   Il file  credenziali.env  è già compilato da Matteo. Non devi toccarlo.
+
+2) SBLOCCO (solo la prima volta)
+   macOS blocca gli script scaricati da internet. Se al doppio click compare
+   « … non è stata aperta / Apple non è in grado di verificare … » (con solo
+   "Sposta nel Cestino / Fine"), sblocca TUTTO in una volta così:
+
+   a) Apri il TERMINALE:  premi  ⌘ + Barra spaziatrice , scrivi  Terminale ,
+      premi Invio.
+   b) Nel Terminale scrivi questo, CON UNO SPAZIO alla fine, e NON premere
+      Invio:
+             xattr -cr
+   c) Dal Finder, TRASCINA la cartella  Vroomi-Newsletter  dentro la finestra
+      del Terminale: il percorso si scrive da solo.
+   d) Premi Invio.  (Non compare nessun messaggio: è normale.)
+   e) Chiudi il Terminale.
+
+   In alternativa, senza Terminale: Impostazioni di Sistema → Privacy e
+   Sicurezza → scorri in fondo → accanto al file bloccato premi "Apri
+   comunque" (ma va ripetuto per ciascuno dei 3 script).
+
+3) PROVA
+   Doppio click su  « 1 - PROVA (non crea nulla) ».
+   Al primo avvio prepara da solo l'ambiente (1-2 minuti), poi apre Chrome
+   e mostra quante schede nuove ci sarebbero — SENZA creare niente.
+
+
+USO NORMALE
+───────────
+• « 1 - PROVA (non crea nulla) »  → controlla cosa c'è di nuovo (sicuro).
+• « 2 - CREA SCHEDE DRAFT »       → crea le schede in BOZZA per TUTTE le
+  newsletter valide. Chiede conferma (devi scrivere CREA).
+• « 3 - CREA UNA NEWSLETTER »     → crea in BOZZA solo UNA newsletter (o
+  poche): ti chiede l'ID. L'ID è il numero tra parentesi che vedi nella
+  PROVA, es. in « KK-SCALE (15280) » l'ID è 15280. Utile per un brand alla
+  volta o per un test mirato.
+
+In tutti i casi le schede con SKU già presente vengono saltate: puoi
+rilanciare quando vuoi senza creare doppioni.
+
+Mentre gira si apre una finestra di CHROME: non chiuderla finché non finisce.
+Se Chrome si blocca, il programma riparte da solo con una sessione nuova.
+
+
+DOVE FINISCONO LE SCHEDE
+────────────────────────
+Su Shopify come BOZZA:
+https://admin.shopify.com/store/vroomimodels/products
+Un riepilogo di ogni run è salvato nella cartella  output/  (file report_...csv).
+
+
+DOMANDE FREQUENTI
+─────────────────
+• "Non si apre / Apple non è in grado di verificarlo" (solo Cestino/Fine)
+   → è il blocco di macOS: fai lo SBLOCCO col comando  xattr -cr  del passo 2.
+     Va fatto una sola volta e sblocca tutti e 3 gli script insieme.
+• "Chiede l'email di Chrome / login" → è normale, il sito ha una protezione:
+   la finestra Chrome fa il login da sola con le credenziali del file.
+• "0 prodotti / si blocca su Cloudflare" → riprova: a volte la protezione
+   del sito è lenta, il programma ritenta da solo.
+• Per modificare brand o markup: file  Valid_Trademarks.txt  e
+   Vroomi_Markup.txt  (chiedi a Matteo prima di cambiarli).
