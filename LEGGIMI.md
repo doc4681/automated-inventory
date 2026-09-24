@@ -128,6 +128,16 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vroomi.inventory.pli
 
 ---
 
+## 📰 Strumento SEPARATO: Newsletter MCWS → schede Shopify (bozze)
+
+La cartella **`Vroomi-Newsletter/`** contiene il programma che legge le newsletter
+recenti di modelcarswholesale.com e crea le schede prodotto in BOZZA su Shopify.
+Si usa con i 3 script `1 - PROVA`, `2 - CREA SCHEDE DRAFT`, `3 - CREA UNA NEWSLETTER`.
+Istruzioni in `Vroomi-Newsletter/LEGGIMI.txt`. Le credenziali vanno in
+`Vroomi-Newsletter/credenziali.env` (mai nel repo: parti da `credenziali.esempio.env`).
+
+---
+
 ## ⚠️ Strumento SEPARATO: la webapp Streamlit
 
 I file **`app.py`**, **`logic.py`**, **`logic_v02.py`**, **`logic_v03.py`**, **`icon.png`** **NON** fanno parte di questo catalogo. Sono una **webapp Streamlit a parte** per sincronizzare le **quantità/costi** di magazzino (Shopify ↔ MCWS/BBR), un lavoro diverso. Si lancia con `streamlit run app.py`. Lasciata qui apposta, ma è un altro strumento.
