@@ -41,3 +41,7 @@ logs/
 # Stato runtime del pannello Streamlit
 .webapp_run.json
 _archivio/
+
+# Vroomi-Newsletter: report e log delle run (restano solo sul Mac)
+Vroomi-Newsletter/output/*
+!Vroomi-Newsletter/output/.gitkeep

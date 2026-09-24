@@ -219,7 +219,7 @@ def build_payload(p: scraper.Product, cat: catalog.Catalog) -> dict:
     }
 
 
-def main() -> None:
+def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true", help="scrive davvero su Shopify (default: DRY-RUN)")
     ap.add_argument("--newsletter", help="elabora solo questa/e newsletter id (virgola-separate)")
@@ -239,6 +239,12 @@ def main() -> None:
         print("  [Shopify] token OK (store Vroomi)")
     except Exception as e:
         print(f"  [Shopify] non disponibile ({e}); dedup e creazione disattivati.")
+        if args.apply:
+            # Senza Shopify con --apply non verrebbe creato nulla: meglio fermarsi
+            # subito con un errore chiaro che fare tutto lo scraping per niente.
+            print("\nERRORE: con Shopify non disponibile non posso creare le schede.\n"
+                  "Controlla SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET in credenziali.env.")
+            sys.exit(1)
 
     if args.no_enrich:
         print("  [ATTENZIONE] --no-enrich: le pagine di dettaglio non vengono aperte,"
@@ -247,7 +253,7 @@ def main() -> None:
     bs = session.BrowserSession(headless=args.headless)
     report: list[dict] = []
     skipped_brands: list[tuple[str, str]] = []
-    created = existing = no_price = 0
+    created = existing = no_price = no_markup = errors = 0
     processed = 0
 
     try:
@@ -261,21 +267,43 @@ def main() -> None:
             if only_ids and n.id not in only_ids:
                 continue
             if not cat.is_valid(n.brand):
-                skipped_brands.append((n.brand, "non in Valid_Trademarks"))
+                skipped_brands.append((f"{n.brand} (id {n.id})", "non in Valid_Trademarks"))
                 continue
             if cat.markup_for(n.brand) is None:
-                skipped_brands.append((n.brand, "manca markup"))
+                skipped_brands.append((f"{n.brand} (id {n.id})", "manca markup"))
                 continue
             kept.append(n)
+
+        # ID chiesti esplicitamente ma non presenti tra le newsletter "recenti"
+        # della sidebar: prima venivano ignorati in silenzio (0 schede, nessun
+        # messaggio). Ora si apre direttamente la pagina della newsletter e il
+        # brand si verifica prodotto per prodotto.
+        if only_ids:
+            in_sidebar = {n.id for n in newsletters}
+            for nid in sorted(only_ids - in_sidebar):
+                if not nid:
+                    continue
+                print(f"  [info] newsletter {nid} non è tra le recenti della sidebar:"
+                      " la apro direttamente.")
+                kept.append(scraper.Newsletter(
+                    id=nid, brand="", date="",
+                    url=f"{session.BASE_URL}/it/newsletter/{nid}"))
+
         if args.max_newsletters:
             kept = kept[:args.max_newsletters]
 
         print(f"Newsletter valide da elaborare: {len(kept)}")
         for n in kept:
-            print(f"  - {n.date} {n.brand} (id {n.id})")
+            print(f"  - {n.date or '?'} {n.brand or '(brand dai prodotti)'} (id {n.id})")
         if skipped_brands:
             print(f"Scartate ({len(skipped_brands)}): " +
                   ", ".join(f"{b}[{r}]" for b, r in skipped_brands[:20]))
+        if not kept:
+            print("\nNESSUNA newsletter da elaborare: non verrà creato nulla.")
+            if only_ids:
+                print("Gli ID indicati sono stati scartati (vedi 'Scartate' qui sopra):"
+                      " il brand non è in Valid_Trademarks.txt o manca il markup"
+                      " in Vroomi_Markup.txt.")
 
         # elaborazione
         for n in kept:
@@ -284,7 +312,7 @@ def main() -> None:
                 print(f"  !! {n.brand} ({n.id}): pagina non caricata")
                 continue
             prods = scraper.parse_newsletter(soup)
-            print(f"\n== {n.brand} ({n.id}): {len(prods)} prodotti ==")
+            print(f"\n== {n.brand or 'newsletter'} ({n.id}): {len(prods)} prodotti ==")
 
             for p in prods:
                 if args.limit and processed >= args.limit:
@@ -292,6 +320,20 @@ def main() -> None:
                 if not p.cost:
                     no_price += 1
                     continue
+
+                # markup del prodotto: il trademark scritto sul prodotto puo'
+                # differire da quello della newsletter (es. 'MITICA-DIECAST' vs
+                # 'MITICA'); in quel caso vale il brand della newsletter. Senza
+                # markup il calcolo prezzo andava in crash (None * float).
+                if not n.brand and not cat.is_valid(p.trademark):
+                    no_markup += 1
+                    continue
+                if cat.markup_for(p.trademark) is None:
+                    if n.brand and cat.markup_for(n.brand) is not None:
+                        p.trademark = n.brand
+                    else:
+                        no_markup += 1
+                        continue
 
                 if not args.no_enrich:
                     det = bs.get_soup(p.detail_url)
@@ -319,6 +361,7 @@ def main() -> None:
                             admin_url = res["admin_url"]
                         except Exception as e:
                             status = f"ERRORE: {e}"
+                            errors += 1
                     else:
                         status = "DA-CREARE"
 
@@ -353,13 +396,27 @@ def main() -> None:
     print(f"Prodotti elaborati (con prezzo): {processed}")
     print(f"  creati:   {created}")
     print(f"  esistenti (saltati): {existing}")
-    print(f"  da creare (dry-run): {processed - created - existing}")
+    print(f"  da creare (dry-run): {processed - created - existing - errors}")
     print(f"Prodotti senza prezzo (saltati): {no_price}")
+    if no_markup:
+        print(f"Prodotti di brand non validi / senza markup (saltati): {no_markup}")
+    if errors:
+        print(f"ERRORI in creazione su Shopify: {errors} (dettaglio nel report)")
     if report:
         print(f"Report: {rep}")
     if not args.apply:
         print("\n[DRY-RUN] Nessuna scheda scritta. Aggiungi --apply per creare i DRAFT.")
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\nInterrotto.")
+        sys.exit(130)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"\nERRORE: il programma si è fermato ({type(e).__name__}: {e})")
+        sys.exit(1)

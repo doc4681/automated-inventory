@@ -1,5 +1,12 @@
 # Vroomi — Newsletter → Shopify (dipendenze)
-# Versioni testate e funzionanti (agosto 2026).
+# Versioni testate e funzionanti (agosto 2026). Serve Python >= 3.10.
+
+# Python 3.12+ ha rimosso distutils e i venv nuovi NON installano più
+# setuptools: undetected-chromedriver importa ancora distutils (fornito da
+# setuptools). Senza questa riga run.py crasha all'avvio con
+# "ModuleNotFoundError: No module named 'distutils'".
+setuptools>=68
+
 undetected-chromedriver==3.5.5
 selenium==4.43.0
 beautifulsoup4==4.14.3

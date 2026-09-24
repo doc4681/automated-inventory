@@ -13,37 +13,24 @@ echo "║   VROOMI — Newsletter → Shopify   (PROVA)     ║"
 echo "╚══════════════════════════════════════════════╝"
 echo ""
 
-# ── Primo avvio: crea l'ambiente Python e installa le dipendenze ─────────────
-if [[ ! -x ".venv/bin/python" ]]; then
-  echo "▶ Primo avvio: preparo l'ambiente (1-2 minuti)…"
-  if ! python3 -m venv .venv; then
-    echo "❌ Python 3 non trovato. Installa Python 3 da python.org e riprova."
-    read -rp "Premi Invio per chiudere…" _; exit 1
-  fi
-  ./.venv/bin/python -m pip install --upgrade pip >/dev/null 2>&1
-  echo "▶ Installo le dipendenze…"
-  if ! ./.venv/bin/python -m pip install -r requirements.txt; then
-    echo "❌ Errore nell'installazione delle dipendenze."
-    read -rp "Premi Invio per chiudere…" _; exit 1
-  fi
-fi
-
-# ── Controllo credenziali ───────────────────────────────────────────────────
-if grep -q "tua-email@esempio.com" credenziali.env 2>/dev/null; then
-  echo "⚠️  Devi ancora inserire le credenziali."
-  echo "   Apri il file  credenziali.env  con TextEdit, compila e salva."
-  echo ""
-  read -rp "Premi Invio per chiudere…" _; exit 1
-fi
+# shellcheck source=_prepara.sh
+source ./_prepara.sh
+prepara_tutto
 
 echo "▶ Avvio la prova. Si aprirà una finestra di Chrome: NON chiuderla."
 echo "  (al termine vedrai il riepilogo qui sotto)"
 echo ""
-./.venv/bin/python run.py --no-enrich
+esegui_run --no-enrich
 
 echo ""
 echo "────────────────────────────────────────────────"
-echo "✅ Prova finita. Non è stata creata nessuna scheda."
-echo "   Per creare davvero le schede (in BOZZA), usa lo script:"
-echo "   « 2 - CREA SCHEDE DRAFT »"
+if [[ $ESITO_RUN -eq 0 ]]; then
+  echo "✅ Prova finita. Non è stata creata nessuna scheda."
+  echo "   Per creare davvero le schede (in BOZZA), usa lo script:"
+  echo "   « 2 - CREA SCHEDE DRAFT »  oppure  « 3 - CREA UNA NEWSLETTER »"
+else
+  echo "❌ La prova ha avuto errori (codice $ESITO_RUN)."
+  echo "   Leggi il messaggio qui sopra. Se non è chiaro, manda a Matteo il file:"
+  echo "   output/ultima_run.log"
+fi
 read -rp "Premi Invio per chiudere…" _
