@@ -23,10 +23,13 @@ COSA SERVE SUL MAC
 
 PRIMA VOLTA — 3 PASSI
 ─────────────────────
-1) CREDENZIALI — già pronte.
-   Il file  credenziali.env  è già compilato da Matteo. Non devi toccarlo.
-   (Se manca, lo script te lo dice: si crea copiando credenziali.esempio.env.
-   Contiene password: NON condividere mai lo zip con un link pubblico.)
+1) CREDENZIALI
+   • Se avevi già la versione precedente: COPIA il tuo vecchio file
+     credenziali.env dentro questa cartella. Fatto.
+   • Altrimenti: fai una copia di  credenziali.esempio.env , chiamala
+     credenziali.env , aprila con TextEdit e compila i valori (te li dà
+     Matteo). Contiene password: NON condividerla mai con link pubblici.
+   (Se manca, lo script te lo dice.)
 
 2) SBLOCCO (solo la prima volta)
    macOS blocca gli script scaricati da internet. Se al doppio click compare
