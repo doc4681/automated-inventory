@@ -1,133 +1,116 @@
-# 📦 Vroomi — Catalogo carmodel + MCWS
+# 📦 Vroomi — Catalogo carmodel + MCWS (automatico)
 
-> Guida rapida. In 1 minuto sai cosa lanciare e dove trovare il risultato.
+**Cosa fa:** scarica i prodotti da **carmodel.com** (solo i marchi in `config/Valid_Trademarks.txt`,
+immagini incluse), scarica il listino **MCWS**, li unisce e produce il file per Shopify.
+**Gira da solo** ogni 2 giorni alle 07:00.
 
-## 🖥️ Modo più semplice: il Pannello di Controllo
+## 📄 Il risultato
 
-**Doppio click su  `AVVIA PANNELLO.command`** → si apre nel browser un pannello con i pulsanti.
-Al primo avvio prepara da solo l'ambiente (1-2 min). Da lì puoi:
-- lanciare la pipeline completa e vedere il **log in diretta**;
-- scaricare l'ultimo risultato;
-- accendere/spegnere l'**arricchimento Shopify** (note → `custom.notes`);
-- attivare/sospendere la **pianificazione automatica** (ogni 2 giorni), senza toccare il Terminale.
+➡️ **`RISULTATO/merged_products_LATEST.csv`** — sempre l'ultimo, pronto da importare su Shopify.
 
-Ha anche una seconda scheda con la vecchia webapp di **sync inventario** (upload→download).
+A ogni run ricevi una **notifica macOS** (✅ aggiornato / ⚠️ fallito).
+Se una run fallisce, il risultato precedente **non viene toccato**.
 
-> 🆕 **Nuovo Mac (collaboratore):** copia la cartella, crea `~/.env.vroomi` con le credenziali
-> (vedi sotto), assicurati di avere Chrome e Python 3, poi doppio click su `AVVIA PANNELLO.command`.
-> Tutto il resto (ambiente, dipendenze, pianificazione per quella macchina) lo fa il pannello da sé.
+## ▶️ Come si usa
 
----
+| Voglio… | Faccio… |
+|---|---|
+| Non fare niente | Niente: la pianificazione automatica è attiva (ogni 2 giorni, 07:00). |
+| Aggiornare adesso | Doppio click su **`AGGIORNA INVENTARIO.command`** (~25 min, lascia il Mac acceso). |
+| Vedere lo stato, il log, accendere/spegnere l'automatico | Doppio click su **`AVVIA PANNELLO.command`** → si apre nel browser. |
+| Mettere su Shopify i prodotti di una newsletter MCWS | Pannello → sezione **📰 Newsletter** (vedi sotto). |
 
-## ▶️ In alternativa: aggiornare il catalogo da riga di comando
+Durante la run si apre una finestra di Chrome: è normale (serve a superare Cloudflare), **non chiuderla**.
 
-**Doppio click su  `AGGIORNA INVENTARIO.command`**
+## 🗂️ Cosa c'è nella cartella
 
-Fa tutto da solo, in 3 passi:
-1. 🔍 Scarica i dati dei prodotti da **carmodel.com** (solo i marchi in `Valid_Trademarks.txt`, immagini incluse)
-2. ⬇️ Scarica il listino inventario da **MCWS** (login automatico)
-3. 🔗 Unisce i due: tiene solo i prodotti il cui `codice_produttore` esiste anche su MCWS
+| Cartella / file | Cos'è | Serve toccarlo? |
+|---|---|---|
+| `AGGIORNA INVENTARIO.command` | Pulsante: aggiorna adesso | ✅ lo usi |
+| `AVVIA PANNELLO.command` | Pulsante: apre il pannello di controllo | ✅ lo usi |
+| `RISULTATO/` | Il file finale per Shopify | ✅ lo prendi da qui |
+| `config/` | `Valid_Trademarks.txt` (marchi da scaricare, uno per riga) e `Vroomi_Markup.txt` (ricarichi) | ✏️ solo se cambi marchi/ricarichi |
+| `credenziali.env` | Login MCWS e Shopify (mai condividerlo) | ✏️ solo se cambiano le password |
+| `logs/` | Un log per ogni run (`run_<data>.log`) | 🔍 solo se qualcosa va storto |
+| `dati/` | File intermedi e storico (ultimi 15 per tipo, pulizia automatica) | ❌ |
+| `pipeline/` | Il motore: scraper, downloader, merge, Shopify, newsletter, `run.sh` | ❌ |
+| `pannello/` | Il codice del pannello (e della scheda "Sync inventario") | ❌ |
+| `app.py`, `requirements.txt`, `.venv/` | Avvio pannello e dipendenze Python | ❌ |
+| `_archivio/` | Roba vecchia, non usata. Si può cancellare. | ❌ |
 
-⏱️ Dura ~20–40 minuti. Tieni il Mac **acceso e sbloccato** durante la run.
+## ⚙️ Come funziona (i 4 passi di `pipeline/run.sh`)
 
-## 📄 Dove trovo il risultato
+1. **carmodel.com** → `dati/carmodel/` — scartato se troppo piccolo o se mancano >10% dei marchi
+2. **MCWS** (login automatico) → `dati/mcws/` — scartato se troppo piccolo o calo >50% vs run precedente
+3. **Merge**: tiene i prodotti il cui `codice_produttore` esiste anche su MCWS → `dati/merged/` + `RISULTATO/merged_products_LATEST.csv`
+4. **Shopify** (opzionale, spento di default): scrive le note nel metafield `custom.notes`
 
-➡️ **`RISULTATO/merged_products_LATEST.csv`**
+I file scartati finiscono in `dati/scartati/`. Una sola run alla volta: se ne parte una seconda, esce subito.
 
-È sempre il file più recente, pronto da importare su Shopify. (Lo storico con data resta in `merger/output/`.)
+## ⏰ Esecuzione automatica
+
+Si attiva/sospende dal **pannello** (sezione "Esecuzione automatica"). È un job di macOS
+(`launchd`, `~/Library/LaunchAgents/com.vroomi.inventory.plist`): parte ogni 2 giorni alle 07:00.
+Se a quell'ora il Mac dorme, parte appena si risveglia; se è spento, salta a quella successiva.
+
+## 📰 Newsletter MCWS → nuovi prodotti Shopify
+
+Su modelcarswholesale.com la colonna **"Recent Newsletters"** elenca le newsletter
+(es. *24-09-2026 - MR-MODELS*), ognuna con i prodotti nuovi. Dal pannello:
+
+1. Scegli **quale newsletter** (1 = la più recente, 2 = la seconda…).
+2. **🔍 Prova**: si apre Chrome, entra su MCWS e mostra nel log, per ogni prodotto,
+   come verrebbe creato su Shopify (titolo, SKU, prezzo, foto, campi). **Non scrive nulla.**
+3. Se va bene, **🛍️ Crea su Shopify in BOZZA**: crea i prodotti che non esistono ancora.
+   Sono **bozze**: controllale su Shopify e pubblicale tu.
+
+Come viene costruito il prodotto (uguale a quelli che hai già):
+- SKU = codice produttore, barcode = ID MCWS, costo = prezzo netto MCWS
+- prezzo = stesse regole della scheda Sync (costo <10€ ×2,2; <20€ ×1,9; altrimenti
+  ricarico del marchio in `config/Vroomi_Markup.txt`, default 1,50) arrotondato a ,90
+- foto grandi, materiale e note da carmodel; categoria (ROAD CARS, RACING CARS…) presa dai
+  prodotti simili già sul negozio, altrimenti dedotta dal titolo — il log dice quale
+- I prodotti già presenti (stesso SKU o barcode) vengono saltati: rilanciare è sicuro.
+
+Da Terminale: `bash pipeline/newsletter.sh --list` (elenco), `--index 1` (prova),
+`--index 1 --apply` (crea). Report di ogni run in `dati/newsletter/`, log in `logs/newsletter_*.log`.
+
+## 🛍️ Shopify (opzionale): note → metafield `custom.notes`
+
+Aggiunge la nota del catalogo ai prodotti **già presenti** nello store che non ce l'hanno.
+Match per EAN→barcode, poi codice_produttore→SKU. Non sovrascrive e non cancella mai note esistenti.
+
+- Si accende dal pannello (interruttore "Arricchimento Shopify") oppure con `ENABLE_SHOPIFY=1` in `credenziali.env`.
+- Credenziali: app **`Vroomi Enricher_Claude`** della Dev Dashboard Shopify
+  (dev.shopify.com → app → Settings → Credentials): `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET`, scope `read_products`/`write_products`.
+- Prova senza scrivere nulla: `.venv/bin/python pipeline/shopify_enricher.py` (aggiungi `--apply` per scrivere davvero, `--limit 50` per provare su pochi).
+
+## 🆕 Installazione su un altro Mac
+
+1. Copia la cartella (senza `credenziali.env`, `.venv/`, `dati/`, `logs/`).
+2. Serve **Google Chrome** e **Python 3** (`brew install python`).
+3. Rinomina `credenziali.esempio.env` → `credenziali.env` e compila `MCWS_USERNAME` / `MCWS_PASSWORD`
+   (tra virgolette **singole**).
+4. Doppio click su `AVVIA PANNELLO.command`: al primo avvio prepara tutto da solo (1-2 min).
+   Poi dal pannello attiva l'esecuzione automatica.
+
+Se macOS dice che il file *"è danneggiato"* o *"sviluppatore non identificato"*: apri il Terminale,
+scrivi `xattr -cr ` (con lo spazio), trascina dentro la cartella del progetto, premi Invio.
 
 ## 🔔 Se qualcosa va storto
 
-- I **dati buoni precedenti non vengono mai sovrascritti** da una run fallita.
-- Riceverai una notifica macOS con l'esito.
-- I dettagli di ogni run sono in `logs/run_<data>.log`.
+Apri l'ultimo `logs/run_<data>.log` (o il pannello, che lo mostra) e cerca le righe con ✗.
 
-## ⚙️ Configurazione
+| Nel log vedi… | Causa / soluzione |
+|---|---|
+| `Bad CPU type in executable` | Risolto (set 2026): il chromedriver ora viene preso per l'architettura giusta del Mac. Se ricompare, cancella `~/Library/Application Support/vroomi/chromedriver/`. |
+| `Impossibile avviare Chrome` | Chrome non installato o appena aggiornato senza rete: riprova. |
+| `Cloudflare non superato` | Il sito ha bloccato la sessione: di solito alla run successiva passa. |
+| `login rifiutato da MCWS` | Password MCWS cambiata: aggiornala in `credenziali.env`. |
+| `copertura brand … mancanti: …` | Un marchio di `Valid_Trademarks.txt` non esiste più su carmodel: toglilo dal file. |
 
-| File | A cosa serve |
-|------|--------------|
-| `Valid_Trademarks.txt` | I marchi da scaricare (uno per riga). Aggiungi/togli righe qui. |
-| `Vroomi_Markup.txt` | I ricarichi prezzo per marchio. |
-| `~/.env.vroomi` | Credenziali MCWS (fuori dal repo, mai condiviso). |
+## 🔄 Scheda "Sync inventario" del pannello
 
-## 🗂️ Cosa c'è nelle cartelle
-
-| Cartella / file | Cos'è |
-|-----------------|-------|
-| `AGGIORNA INVENTARIO.command` | **👈 Il pulsante. È l'unica cosa che lanci.** |
-| `RISULTATO/` | Il file finale da importare su Shopify. |
-| `scraper/` `downloader/` `merger/` | Il "motore" dei 3 passi. Non serve aprirlo. |
-| `shopify_enricher/` | Step 4 **opzionale**: scrive le note su Shopify (vedi sotto). |
-| `run_local.sh` | La logica condivisa (usata dal pulsante e dallo scheduler). |
-| `logs/` | I log automatici di ogni run. |
-| `_archivio/` | Vecchi file superati. Si possono ignorare. |
-
----
-
-## 🛍️ Step 4 OPZIONALE — Shopify: note → metafield `custom.notes`
-
-Scrive il campo `note` del catalogo nel metafield **`custom.notes`** dei prodotti
-**già presenti** nel tuo store Shopify. Match per **EAN→barcode** (primario) e
-**codice_produttore→SKU** (fallback). I prodotti non nel catalogo non vengono toccati.
-Scope: *overwrite di tutti i match* (se la nota è vuota, il metafield viene cancellato).
-
-**È DISATTIVATO di default.** Si attiva/disattiva con una variabile.
-
-### Credenziali Shopify (metodo nuovo, post-2026)
-Da gennaio 2026 Shopify non usa più i token `shpat_` da copiare a mano: si usa
-un'app della **Dev Dashboard** e lo script ottiene il token da solo (client
-credentials grant) usando **Client ID + Client Secret**.
-
-App già creata: **`Vroomi Enricher_Claude`**. Le credenziali sono in:
-**dev.shopify.com → app → Settings → Credentials**
-- **Client ID** (identificatore, non segreto)
-- **Client Secret** (`shpss_...`)
-
-Queste sono già state messe in `~/.env.vroomi`:
-```bash
-export SHOPIFY_STORE_DOMAIN="scn8p4-h7.myshopify.com"
-export SHOPIFY_CLIENT_ID="...."
-export SHOPIFY_CLIENT_SECRET="shpss_...."
-export ENABLE_SHOPIFY=1      # 1 = attivo, 0 (o assente) = disattivo
-```
-L'app deve avere gli scope **read_products** e **write_products** (già a posto).
-
-### Come usarlo
-- **Provalo senza scrivere** (dry-run, mostra cosa farebbe):
-  ```bash
-  python3 shopify_enricher/shopify_enricher.py
-  ```
-- **Scrivi davvero su Shopify**:
-  ```bash
-  python3 shopify_enricher/shopify_enricher.py --apply
-  ```
-- **Solo primi 50 prodotti (test)**: aggiungi `--limit 50`
-- Quando `ENABLE_SHOPIFY=1`, lo step parte **automaticamente** anche dal pulsante
-  `AGGIORNA INVENTARIO.command` (come 4° passo, dopo il merge).
-- Per **disattivarlo**: metti `ENABLE_SHOPIFY=0` (o togli la riga) in `~/.env.vroomi`.
-
----
-
-## ⏰ Esecuzione automatica (attualmente SOSPESA)
-
-C'era una pianificazione ogni 2 giorni alle 07:00. **È stata sospesa** — ora lanci tutto a mano.
-
-⚠️ Nota: il solo `bootout` NON basta — al riavvio del Mac launchd ricarica il job.
-Per sospenderla **davvero** (persistente) serve anche `disable`.
-
-Per **sospenderla** in modo permanente:
-```bash
-launchctl bootout gui/$(id -u)/com.vroomi.inventory
-launchctl disable gui/$(id -u)/com.vroomi.inventory
-```
-Per **riattivarla** in futuro (serve `enable`, perché ora è disabilitata):
-```bash
-launchctl enable gui/$(id -u)/com.vroomi.inventory
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vroomi.inventory.plist
-```
-
----
-
-## ⚠️ Strumento SEPARATO: la webapp Streamlit
-
-I file **`app.py`**, **`logic.py`**, **`logic_v02.py`**, **`logic_v03.py`**, **`icon.png`** **NON** fanno parte di questo catalogo. Sono una **webapp Streamlit a parte** per sincronizzare le **quantità/costi** di magazzino (Shopify ↔ MCWS/BBR), un lavoro diverso. Si lancia con `streamlit run app.py`. Lasciata qui apposta, ma è un altro strumento.
+Strumento **separato** dal catalogo: carichi i CSV (Shopify + listino MCWS/BBR) e scarichi il file
+di aggiornamento quantità/costi/prezzi. Logica in `pannello/logic.py` (formato originale) e
+`pannello/logic_v03.py` (formato Products.csv + markup). Funziona anche su Streamlit Cloud (`app.py`).

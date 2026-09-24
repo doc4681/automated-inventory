@@ -4,8 +4,8 @@ Scrapes product data from https://www.carmodel.com (EN, no /it/).
 Usa undetected-chromedriver per bypassare Cloudflare.
 
 Usage:
-  python scraper/carmodel_scraper.py --test   # BURAGO only, stampa prime 3 righe
-  python scraper/carmodel_scraper.py          # tutti i brand in Valid_Trademarks.txt
+  python pipeline/carmodel_scraper.py --test   # BURAGO only, stampa prime 3 righe
+  python pipeline/carmodel_scraper.py          # tutti i brand in config/Valid_Trademarks.txt
 """
 
 from __future__ import annotations  # compatibilità Python 3.9 (sintassi "X | None")
@@ -15,21 +15,17 @@ import re
 import time
 import csv
 import argparse
-from datetime import datetime
 from pathlib import Path
 
 import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
 
+from chrome import new_chrome
+from paths import CARMODEL_DIR, TRADEMARKS_FILE, output_file
+
 BASE_URL = "https://www.carmodel.com"
 SLEEP = 2
 
-
-def get_output_file() -> Path:
-    ts = os.environ.get("RUN_TIMESTAMP", datetime.now().strftime("%Y-%m-%d_%H%M"))
-    out_dir = Path(__file__).parent / "output"
-    out_dir.mkdir(exist_ok=True)
-    return out_dir / f"carmodel_scraped_{ts}.csv"
 
 FIELDNAMES = [
     "codice_produttore",
@@ -65,62 +61,11 @@ from selenium.common.exceptions import (
 RESTART_EVERY = 10   # riavvia Chrome ogni N brand
 
 
-import subprocess
-
-
-def chrome_major_version() -> int | None:
-    """Versione major di Chrome installato (es. 148), per allineare il chromedriver.
-    Evita l'errore 'ChromeDriver only supports Chrome version X' quando uc scarica
-    un driver piu' recente del browser. Override manuale via env CHROME_MAJOR."""
-    env = os.environ.get("CHROME_MAJOR")
-    if env and env.isdigit():
-        return int(env)
-    paths = [
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
-    ]
-    for path in paths:
-        try:
-            out = subprocess.check_output([path, "--version"], text=True, timeout=10)
-            m = re.search(r"\b(\d+)\.", out)
-            if m:
-                return int(m.group(1))
-        except Exception:
-            continue
-    return None
-
-
-# Chromedriver già scaricato e "patchato" da undetected-chromedriver.
-# Riusarlo evita che uc contatti internet a OGNI avvio di Chrome: su alcune reti
-# quella richiesta viene rifiutata (ConnectionRefused) e fa fallire tutta la run.
-UC_CACHED_DRIVER = (Path.home() / "Library" / "Application Support"
-                    / "undetected_chromedriver" / "undetected_chromedriver")
-
-
-def make_driver(retries: int = 3) -> uc.Chrome:
+def make_driver() -> uc.Chrome:
     # Headless opt-in via env CARMODEL_HEADLESS=1.
     # NB: in headless undetected-chromedriver viene piu' spesso bloccato da
     # Cloudflare; default = finestra visibile (piu' affidabile).
-    headless = os.environ.get("CARMODEL_HEADLESS", "0") == "1"
-    vmain = chrome_major_version()
-    last_err = None
-    for attempt in range(1, retries + 1):
-        # 1° tentativo: riusa il driver in cache (nessuna chiamata di rete).
-        # Se fallisce (es. Chrome aggiornato), riprova lasciando che uc lo riscarichi.
-        kwargs = dict(headless=headless, use_subprocess=True, version_main=vmain)
-        if attempt == 1 and UC_CACHED_DRIVER.exists():
-            kwargs["driver_executable_path"] = str(UC_CACHED_DRIVER)
-            note = " [driver in cache]"
-        else:
-            note = ""
-        try:
-            print(f"  [Chrome] avvio sessione (headless={headless}, version_main={vmain}){note}...")
-            return uc.Chrome(**kwargs)
-        except Exception as e:
-            last_err = e
-            print(f"  [Chrome] avvio fallito ({type(e).__name__}) — tentativo {attempt}/{retries}")
-            time.sleep(5 * attempt)
-    raise RuntimeError(f"Impossibile avviare Chrome dopo {retries} tentativi: {last_err}")
+    return new_chrome(headless=os.environ.get("CARMODEL_HEADLESS", "0") == "1")
 
 
 def restart_driver(driver: uc.Chrome) -> uc.Chrome:
@@ -192,7 +137,13 @@ def parse_card(card: BeautifulSoup, trademark: str) -> dict | None:
     brand_auto = segs[3].upper() if len(segs) > 3 else ""
 
     desc = card.find("p", class_="product-description")
-    titolo = desc.get_text(strip=True) if desc else ""
+    titolo = ""
+    if desc:
+        # Dal 2026 il sito mette la marca auto in <b> dentro il titolo: la togliamo
+        # (è già in brand_auto) per avere il titolo come prima, es. "F40 1987".
+        for b in desc.find_all("b"):
+            b.decompose()
+        titolo = " ".join(desc.get_text(" ").split())
 
     price_span = card.find("span", class_="actual-price")
     prezzo = ""
@@ -245,6 +196,11 @@ class PageLoadError(Exception):
     """Pagina 1 di un brand non caricata (di solito Cloudflare): ritentabile con sessione nuova."""
 
 
+# Pagine/brand persi durante il run: riepilogati alla fine (prima passavano in silenzio).
+PAGE_FAILURES: list[str] = []
+BRAND_FAILURES: list[str] = []
+
+
 def scrape_trademark(driver: uc.Chrome, trademark: str) -> list[dict]:
     slug = trademark.lower().replace(" ", "-")
     base = f"{BASE_URL}/trademark/{slug}"
@@ -269,8 +225,17 @@ def scrape_trademark(driver: uc.Chrome, trademark: str) -> list[dict]:
             time.sleep(SLEEP)
             soup = get_page_soup(driver, f"{base}?page={page}")
             if soup is None:
-                print(f"    page {page}: skip.")
-                break
+                # Ritenta la singola pagina dopo una pausa. Se non va comunque,
+                # si PROSEGUE con le pagine successive: il vecchio 'break' faceva
+                # perdere in silenzio tutto il resto del brand.
+                pausa = int(os.environ.get("CF_COOLDOWN", "30"))
+                print(f"    page {page}: non caricata — attendo {pausa}s e riprovo")
+                time.sleep(pausa)
+                soup = get_page_soup(driver, f"{base}?page={page}")
+            if soup is None:
+                print(f"    page {page}/{total_pages}: PERSA (continuo con le altre)")
+                PAGE_FAILURES.append(f"{trademark} pag.{page}/{total_pages}")
+                continue
             cards = soup.find_all("article", class_="prod-card")
 
         page_prods = [p for c in cards if (p := parse_card(c, trademark))]
@@ -285,8 +250,7 @@ def main():
     parser.add_argument("--test", action="store_true", help="BURAGO only, stampa prime 3 righe")
     args = parser.parse_args()
 
-    trademarks_file = Path(__file__).parent.parent / "Valid_Trademarks.txt"
-    trademarks = ["BURAGO"] if args.test else load_trademarks(trademarks_file)
+    trademarks = ["BURAGO"] if args.test else load_trademarks(TRADEMARKS_FILE)
 
     driver = make_driver()
     all_products = []
@@ -313,11 +277,13 @@ def main():
                         time.sleep(pausa)
                     else:
                         print(f"  {tm}: skip (Cloudflare non superato).")
+                        BRAND_FAILURES.append(f"{tm} (Cloudflare)")
                 except (InvalidSessionIdException, NoSuchWindowException) as e:
                     print(f"  [Chrome] crash ({type(e).__name__}) su {tm}, tentativo {attempt}/{MAX_TRIES}")
                     driver = restart_driver(driver)
                     if attempt == MAX_TRIES:
                         print(f"  {tm}: skip dopo {MAX_TRIES} crash.")
+                        BRAND_FAILURES.append(f"{tm} (crash Chrome)")
 
             if not args.test:
                 time.sleep(SLEEP)
@@ -327,20 +293,37 @@ def main():
         except Exception:
             pass
 
-    output_file = get_output_file()
-    with open(output_file, "w", newline="", encoding="utf-8") as f:
+    # Il test scrive in una sottocartella: non deve finire tra i dati veri.
+    out_file = output_file(CARMODEL_DIR / "test" if args.test else CARMODEL_DIR, "carmodel_scraped")
+    with open(out_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
         writer.writeheader()
         writer.writerows(all_products)
 
-    print(f"\nDone. {len(all_products)} products → {output_file}")
+    print(f"\nDone. {len(all_products)} products → {out_file}")
+
+    if BRAND_FAILURES or PAGE_FAILURES:
+        print("\n" + "!" * 60)
+        print("SCRAPE INCOMPLETO — questi dati mancano dal file:")
+        for b in BRAND_FAILURES:
+            print(f"  BRAND PERSO : {b}")
+        for p in PAGE_FAILURES:
+            print(f"  PAGINA PERSA: {p}")
+        print("!" * 60)
+        # marcatore accanto al CSV: la pipeline (e chi legge i log) sa che il run
+        # e' parziale e che le note/prezzi mancanti non vanno interpretati come
+        # 'prodotto senza nota'.
+        out_file.with_suffix(".INCOMPLETO.txt").write_text(
+            "\n".join(["BRAND PERSI:"] + BRAND_FAILURES +
+                      ["", "PAGINE PERSE:"] + PAGE_FAILURES) + "\n",
+            encoding="utf-8")
 
     if args.test and all_products:
         print("\nPrime 3 righe:")
         print(",".join(FIELDNAMES))
         for row in all_products[:3]:
             print(",".join(str(row[k]) for k in FIELDNAMES))
-        print(f"\nFile: {output_file}")
+        print(f"\nFile: {out_file}")
 
 
 if __name__ == "__main__":

@@ -11,11 +11,16 @@ from io import BytesIO
 import pandas as pd
 import streamlit as st
 
-from logic import (
+from pannello.controller import REPO
+
+TRADEMARKS_FILE = REPO / "config" / "Valid_Trademarks.txt"
+MARKUP_FILE = REPO / "config" / "Vroomi_Markup.txt"
+
+from pannello.logic import (
     process_inventory, OUTPUT_PREFIX as OUTPUT_PREFIX_LEGACY,
     COL_SHOPIFY_SKU, COL_SHOPIFY_QTY,
 )
-from logic_v03 import (
+from pannello.logic_v03 import (
     process_inventory_v03, process_markup_only, OUTPUT_PREFIX as OUTPUT_PREFIX_V03,
     COL_MCWS_CODE,
 )
@@ -156,7 +161,7 @@ def render_sync_tab():
             include_log = st.checkbox("📝 **Includi colonna 'Change Log' nel file output**", value=True)
         st.write("---")
         try:
-            with open('Valid_Trademarks.txt', 'r', encoding='utf-8') as f:
+            with open(TRADEMARKS_FILE, 'r', encoding='utf-8') as f:
                 valid_tms = [t for t in f.read().splitlines() if t.strip()]
         except Exception:
             valid_tms = []
@@ -164,7 +169,7 @@ def render_sync_tab():
             if valid_tms:
                 st.write(", ".join(valid_tms))
             else:
-                st.warning("File Valid_Trademarks.txt non trovato o vuoto!")
+                st.warning("File config/Valid_Trademarks.txt non trovato o vuoto!")
 
     st.markdown("---")
 
@@ -179,7 +184,7 @@ def render_sync_tab():
     with st.spinner('Elaborazione in corso...'):
         try:
             df_shopify_loaded = load_dataframe(file_shopify)
-            f_trademarks = open('Valid_Trademarks.txt', 'r', encoding='utf-8')
+            f_trademarks = open(TRADEMARKS_FILE, 'r', encoding='utf-8')
             show_legacy_stats = True
             duplicate_report = []
 
@@ -192,13 +197,13 @@ def render_sync_tab():
             elif process_mode == MODE_V03:
                 df_mcws_loaded = load_dataframe(file_mcws)
                 df_bbr_loaded = load_dataframe(file_bbr) if (use_bbr_file and file_bbr) else pd.DataFrame()
-                with open('Vroomi_Markup.txt', 'r', encoding='utf-8') as f_markup:
+                with open(MARKUP_FILE, 'r', encoding='utf-8') as f_markup:
                     result_df, stats, duplicate_report, log_messages = process_inventory_v03(
                         df_shopify_loaded, df_mcws_loaded, df_bbr_loaded, f_markup, f_trademarks,
                         include_change_log=include_log, only_changes=only_changes_param,
                         enable_bbr=use_bbr_file)
             else:  # MODE_MARKUP
-                with open('Vroomi_Markup.txt', 'r', encoding='utf-8') as f_markup:
+                with open(MARKUP_FILE, 'r', encoding='utf-8') as f_markup:
                     result_df, stats, log_messages = process_markup_only(
                         df_shopify_loaded, f_markup, f_trademarks)
                 show_legacy_stats = False

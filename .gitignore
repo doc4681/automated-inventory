@@ -22,22 +22,8 @@ __pycache__/
 .venv/
 venv/
 
-# Cookies salvati dal downloader (contengono session token)
-downloader/mcws_cookies.json
-
-# Output CSV storici con timestamp (restano solo sul Mac, non nel repo)
-scraper/output/
-downloader/output/
-merger/output/
-
-# Risultato finale (rigenerato a ogni run)
+# Dati scaricati/generati (restano solo sul Mac, non nel repo)
+dati/
 RISULTATO/
-
-# Log temporanei
-scraper/scraper_run.log
-run_local.log
 logs/
-
-# Stato runtime del pannello Streamlit
-.webapp_run.json
 _archivio/

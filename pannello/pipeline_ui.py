@@ -7,7 +7,7 @@ mostra il log in diretta, gestisce gli interruttori Shopify e scheduling.
 import time
 import streamlit as st
 
-import controller as ctl
+from pannello import controller as ctl
 
 
 def render_pipeline_tab():
@@ -61,8 +61,9 @@ def render_pipeline_tab():
             "🛍️ Arricchimento Shopify (scrive `custom.notes` dopo il merge)",
             value=creds["enable_shopify"],
             disabled=not creds["shopify"],
-            help="Se attivo, dopo il merge aggiorna le note dei prodotti sullo store. "
-                 "Richiede le credenziali Shopify.",
+            help="Se attivo, dopo il merge AGGIUNGE la nota ai prodotti dello store "
+                 "che non ce l'hanno. Non sovrascrive e non cancella mai le note "
+                 "già presenti. Richiede le credenziali Shopify.",
         )
         if enable != creds["enable_shopify"]:
             ctl.set_enable_shopify(enable)
@@ -121,6 +122,40 @@ def render_pipeline_tab():
 
     st.divider()
 
+    # ── Newsletter MCWS → Shopify ────────────────────────────────────────────
+    st.markdown("#### 📰 Newsletter MCWS → nuovi prodotti Shopify")
+    st.caption("Legge una newsletter di modelcarswholesale.com (colonna \"Recent Newsletters\") "
+               "e crea su Shopify i prodotti che non ci sono ancora, in **BOZZA** (non visibili "
+               "ai clienti finché non li pubblichi tu). Usa sempre prima **Prova**.")
+    nl_running = ctl.newsletter_running()
+    n1, n2, n3 = st.columns([1, 1.2, 1.4])
+    with n1:
+        nl_index = st.number_input("Quale newsletter (1 = la più recente)", min_value=1,
+                                   max_value=100, value=1, step=1)
+    with n2:
+        st.write("")
+        if st.button("🔍 Prova (non scrive nulla)", use_container_width=True,
+                     disabled=nl_running or not creds["mcws"]):
+            ctl.start_newsletter(int(nl_index), apply=False)
+            time.sleep(1)
+            st.rerun()
+    with n3:
+        st.write("")
+        if st.button("🛍️ Crea su Shopify in BOZZA", type="primary", use_container_width=True,
+                     disabled=nl_running or not (creds["mcws"] and creds["shopify"])):
+            ctl.start_newsletter(int(nl_index), apply=True)
+            time.sleep(1)
+            st.rerun()
+    nl_log = ctl.newsletter_logfile()
+    if nl_log:
+        st.code(ctl.tail_log(nl_log, 80) or "(in avvio… si apre Chrome per il login MCWS)",
+                language="text")
+        if nl_running:
+            time.sleep(2)
+            st.rerun()
+
+    st.divider()
+
     # ── Scheduling automatico ────────────────────────────────────────────────
     st.markdown("#### ⏰ Esecuzione automatica (ogni 2 giorni, 07:00)")
     status = ctl.schedule_status()
@@ -137,5 +172,6 @@ def render_pipeline_tab():
             ok, msg = ctl.schedule_disable()
             st.toast("Pianificazione sospesa." if ok else f"Errore: {msg}")
             st.rerun()
-    st.caption("Quando è attiva, il Mac deve essere acceso e sbloccato alle 07:00. "
+    st.caption("Quando è attiva parte da sola ogni 2 giorni alle 07:00 (se il Mac dorme, "
+               "parte al risveglio; se è spento salta alla volta dopo). "
                "La sospensione è persistente (sopravvive ai riavvii).")
