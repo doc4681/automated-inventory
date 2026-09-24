@@ -170,23 +170,36 @@ def stop_pipeline() -> bool:
 
 
 # ─────────────────────────── Newsletter MCWS → Shopify ─────────────────────────
-NEWSLETTER_SCRIPT = REPO / "pipeline" / "newsletter.sh"
+# Unico strumento: Vroomi-Newsletter/run.py (lo stesso dei 3 script per Giuliano).
+NEWSLETTER_DIR = REPO / "Vroomi-Newsletter"
 NEWSLETTER_STATE = LOG_DIR / ".newsletter_run"      # "<pid> <logfile>" dell'ultima run
+CRED_KEYS = ("MCWS_USERNAME", "MCWS_PASSWORD", "SHOPIFY_STORE_DOMAIN",
+             "SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET", "SHOPIFY_ADMIN_TOKEN")
 
 
-def start_newsletter(index: int, apply: bool) -> Path:
-    """Lancia la newsletter n. <index> in background: prova (apply=False) o
-    creazione dei prodotti in BOZZA su Shopify (apply=True). Ritorna il log."""
+def start_newsletter(ids: str, apply: bool) -> Path:
+    """Lancia Vroomi-Newsletter in background: ids = "15538" o "15538,15540"
+    (vuoto = tutte le newsletter valide). apply=False → prova, True → bozze."""
     if newsletter_running():
         raise RuntimeError("Un'importazione newsletter è già in corso.")
     LOG_DIR.mkdir(exist_ok=True)
-    ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    logfile = LOG_DIR / f"newsletter_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.log"
     env = os.environ.copy()
-    env["RUN_TIMESTAMP"] = ts
-    args = ["/bin/bash", str(NEWSLETTER_SCRIPT), "--index", str(index)] + (["--apply"] if apply else [])
-    proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                            cwd=str(REPO), env=env, start_new_session=True)
-    logfile = LOG_DIR / f"newsletter_{ts}.log"
+    env["PYTHONUNBUFFERED"] = "1"
+    for k in CRED_KEYS:                       # stesse credenziali della pipeline
+        v = _env_value(k)
+        if v:
+            env[k] = v
+    py = REPO / ".venv" / "bin" / "python"
+    args = [str(py if py.exists() else "python3"), "-u", "run.py"]
+    ids = re.sub(r"[^0-9,]", "", ids or "")
+    if ids:
+        args += ["--newsletter", ids]
+    if apply:
+        args.append("--apply")
+    with open(logfile, "w") as lf:
+        proc = subprocess.Popen(args, stdout=lf, stderr=subprocess.STDOUT,
+                                cwd=str(NEWSLETTER_DIR), env=env, start_new_session=True)
     NEWSLETTER_STATE.write_text(f"{proc.pid} {logfile}", encoding="utf-8")
     return logfile
 

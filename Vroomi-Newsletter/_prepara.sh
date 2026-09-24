@@ -76,6 +76,10 @@ prepara_ambiente() {
 }
 
 controlla_credenziali() {
+  # Dentro automated-inventory valgono anche ../credenziali.env e ~/.env.vroomi
+  if [[ ! -f "credenziali.env" ]] && { [[ -f "../credenziali.env" ]] || [[ -f "$HOME/.env.vroomi" ]]; }; then
+    return 0
+  fi
   if [[ ! -f "credenziali.env" ]]; then
     chiudi_con_errore "Manca il file  credenziali.env  in questa cartella." \
       "Copia credenziali.esempio.env in credenziali.env e compilalo (o chiedilo a Matteo)."

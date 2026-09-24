@@ -19,16 +19,17 @@ from pathlib import Path
 
 import requests
 
-API_VERSION = "2024-10"
+API_VERSION = "2025-07"   # productSet: prodotto + variante + costo + foto in una chiamata
 
 
 def _load_env(path: Path) -> None:
     if not path.exists():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
-        m = re.match(r'\s*(?:export\s+)?([A-Z_]+)\s*=\s*"?([^"]*)"?\s*$', line)
+        # accetta valori tra virgolette doppie, singole o senza virgolette
+        m = re.match(r"""\s*(?:export\s+)?([A-Z_]+)\s*=\s*(["']?)(.*?)\2\s*$""", line)
         if m:
-            os.environ.setdefault(m.group(1), m.group(2))
+            os.environ.setdefault(m.group(1), m.group(3))
 
 
 def get_access_token(domain: str) -> str:
@@ -61,7 +62,9 @@ class Shopify:
 
     @classmethod
     def from_env(cls) -> "Shopify":
-        _load_env(Path(__file__).parent / "credenziali.env")  # file locale (portabile)
+        here = Path(__file__).parent
+        _load_env(here / "credenziali.env")          # cartella da sola (zip per Giuliano)
+        _load_env(here.parent / "credenziali.env")   # dentro automated-inventory
         _load_env(Path.home() / ".env.vroomi")
         domain = os.environ.get("SHOPIFY_STORE_DOMAIN", "scn8p4-h7.myshopify.com").strip()
         return cls(domain, get_access_token(domain))
@@ -87,36 +90,50 @@ class Shopify:
         raise RuntimeError("GraphQL: troppi retry (throttling)")
 
     # ── dedup ────────────────────────────────────────────────────────────────
-    def find_variant_by_sku(self, sku: str) -> dict | None:
-        """Ritorna {productId, title} se esiste gia' una variante con quello SKU."""
-        if not sku:
-            return None
+    def find_variant_by_sku(self, sku: str, barcode: str = "") -> dict | None:
+        """{productId, title, status} se esiste gia' una variante con quello SKU
+        (o, se dato, con quel barcode = ID MCWS)."""
         q = """
         query($q: String!) {
-          productVariants(first: 1, query: $q) {
-            nodes { sku product { id title status } }
+          productVariants(first: 5, query: $q) {
+            nodes { sku barcode product { id title status } }
           }
         }"""
-        # lo SKU e' numerico: query esatta sku:'...'
-        nodes = self.gql(q, {"q": f"sku:{sku}"})["productVariants"]["nodes"]
-        for n in nodes:
-            if (n.get("sku") or "") == sku:
-                return {"productId": n["product"]["id"], "title": n["product"]["title"],
-                        "status": n["product"]["status"]}
+        checks = []
+        if sku:
+            checks.append((f"sku:{sku}", "sku", sku))
+        if barcode:
+            checks.append((f"barcode:{barcode}", "barcode", barcode))
+        for query, field, value in checks:
+            for n in self.gql(q, {"q": query})["productVariants"]["nodes"]:
+                if (n.get(field) or "").upper() == value.upper():
+                    return {"productId": n["product"]["id"], "title": n["product"]["title"],
+                            "status": n["product"]["status"]}
         return None
 
     # ── creazione ────────────────────────────────────────────────────────────
     def create_draft_product(self, p: dict) -> dict:
-        """Crea un prodotto DRAFT con 1 variante e 1 immagine.
-        `p` deve avere: title, vendor, product_type, tags[list], description_html,
-                        sku, barcode, price(str), image_url."""
-        create = """
-        mutation($input: ProductInput!) {
-          productCreate(input: $input) {
-            product { id variants(first:1){ nodes { id } } }
+        """Crea un prodotto DRAFT con 1 variante (sku, barcode, prezzo, costo,
+        magazzino tracciato e non vendibile a quantità 0) e la foto, in un'unica
+        chiamata productSet. `p` è il payload di run.build_payload."""
+        mutation = """
+        mutation($input: ProductSetInput!) {
+          productSet(synchronous: true, input: $input) {
+            product { id }
             userErrors { field message }
           }
         }"""
+        variant = {
+            "optionValues": [{"optionName": "Title", "name": "Default Title"}],
+            "price": p["price"],
+            "inventoryPolicy": "DENY",
+            "taxable": True,
+            "inventoryItem": {"sku": p["sku"], "tracked": True, "requiresShipping": True},
+        }
+        if p.get("barcode"):
+            variant["barcode"] = p["barcode"]
+        if p.get("cost"):
+            variant["inventoryItem"]["cost"] = p["cost"]
         pin = {
             "title": p["title"],
             "vendor": p.get("vendor", ""),
@@ -124,45 +141,21 @@ class Shopify:
             "tags": p.get("tags", []),
             "descriptionHtml": p.get("description_html", ""),
             "status": "DRAFT",
+            "metafields": p.get("metafields", []),
+            "productOptions": [{"name": "Title", "values": [{"name": "Default Title"}]}],
+            "variants": [variant],
         }
-        if p.get("metafields"):
-            pin["metafields"] = p["metafields"]
-        res = self.gql(create, {"input": pin})["productCreate"]
-        if res["userErrors"]:
-            raise RuntimeError(f"productCreate: {res['userErrors']}")
-        product_id = res["product"]["id"]
-        variant_id = res["product"]["variants"]["nodes"][0]["id"]
-
-        # variante: prezzo, sku, barcode
-        upd = """
-        mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-            userErrors { field message }
-          }
-        }"""
-        vin = {"id": variant_id, "price": p["price"]}
-        if p.get("barcode"):
-            vin["barcode"] = p["barcode"]
-        if p.get("sku"):
-            vin["inventoryItem"] = {"sku": p["sku"]}
-        ures = self.gql(upd, {"productId": product_id, "variants": [vin]})["productVariantsBulkUpdate"]
-        if ures["userErrors"]:
-            raise RuntimeError(f"variantsBulkUpdate: {ures['userErrors']}")
-
-        # immagine (Shopify la scarica dall'url pubblico)
+        if p.get("seo"):
+            pin["seo"] = p["seo"]
         if p.get("image_url"):
-            media = """
-            mutation($productId: ID!, $media: [CreateMediaInput!]!) {
-              productCreateMedia(productId: $productId, media: $media) {
-                mediaUserErrors { field message }
-              }
-            }"""
-            m = {"originalSource": p["image_url"], "mediaContentType": "IMAGE",
-                 "alt": p["title"][:255]}
-            mres = self.gql(media, {"productId": product_id, "media": [m]})["productCreateMedia"]
-            if mres["mediaUserErrors"]:
-                # non blocca: l'immagine si puo' aggiungere dopo
-                print(f"    WARN immagine: {mres['mediaUserErrors']}", flush=True)
+            pin["files"] = [{"originalSource": p["image_url"], "contentType": "IMAGE",
+                             "alt": p.get("image_alt", p["title"])[:255]}]
+        res = self.gql(mutation, {"input": pin})["productSet"]
+        if res["userErrors"]:
+            raise RuntimeError(f"productSet: {res['userErrors']}")
+        product_id = res["product"]["id"]
+        return {"product_id": product_id, "admin_url": self.admin_url(product_id)}
 
-        return {"product_id": product_id, "admin_url":
-                f"https://admin.shopify.com/store/vroomimodels/products/{product_id.split('/')[-1]}"}
+    def admin_url(self, product_id: str) -> str:
+        handle = self.domain.split(".")[0]   # es. scn8p4-h7 da scn8p4-h7.myshopify.com
+        return f"https://admin.shopify.com/store/{handle}/products/{product_id.split('/')[-1]}"

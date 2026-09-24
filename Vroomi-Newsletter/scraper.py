@@ -184,7 +184,7 @@ def parse_newsletter(soup: BeautifulSoup) -> list[Product]:
 
 
 # ── pagina di dettaglio ──────────────────────────────────────────────────────
-_CODE_LABELS_RE = re.compile(r"Codice nostro|Materiale|Codice produttore", re.I)
+_CODE_LABELS_RE = re.compile(r"Codice nostro|Materiale|Codice produttore|\bEAN\b|Our code|Material|Factory code", re.I)
 
 
 def parse_detail(soup: BeautifulSoup) -> dict:

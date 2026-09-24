@@ -124,26 +124,28 @@ def render_pipeline_tab():
 
     # ── Newsletter MCWS → Shopify ────────────────────────────────────────────
     st.markdown("#### 📰 Newsletter MCWS → nuovi prodotti Shopify")
-    st.caption("Legge una newsletter di modelcarswholesale.com (colonna \"Recent Newsletters\") "
-               "e crea su Shopify i prodotti che non ci sono ancora, in **BOZZA** (non visibili "
-               "ai clienti finché non li pubblichi tu). Usa sempre prima **Prova**.")
+    st.caption("Legge le newsletter di modelcarswholesale.com (colonna \"Recent Newsletters\") "
+               "e crea su Shopify i prodotti che non ci sono ancora, in **BOZZA**. Stesso "
+               "programma dei 3 script in `Vroomi-Newsletter/`. Usa sempre prima **Prova**.")
     nl_running = ctl.newsletter_running()
-    n1, n2, n3 = st.columns([1, 1.2, 1.4])
+    n1, n2, n3 = st.columns([1.3, 1, 1.2])
     with n1:
-        nl_index = st.number_input("Quale newsletter (1 = la più recente)", min_value=1,
-                                   max_value=100, value=1, step=1)
+        nl_ids = st.text_input("ID newsletter (es. 15538; più ID con la virgola)",
+                               help="L'ID è il numero nel link della newsletter e compare "
+                                    "anche nella Prova, es. \"BURAGO (id 15538)\". "
+                                    "Vuoto = TUTTE le newsletter dei marchi validi (lungo).")
     with n2:
         st.write("")
         if st.button("🔍 Prova (non scrive nulla)", use_container_width=True,
                      disabled=nl_running or not creds["mcws"]):
-            ctl.start_newsletter(int(nl_index), apply=False)
+            ctl.start_newsletter(nl_ids, apply=False)
             time.sleep(1)
             st.rerun()
     with n3:
         st.write("")
         if st.button("🛍️ Crea su Shopify in BOZZA", type="primary", use_container_width=True,
                      disabled=nl_running or not (creds["mcws"] and creds["shopify"])):
-            ctl.start_newsletter(int(nl_index), apply=True)
+            ctl.start_newsletter(nl_ids, apply=True)
             time.sleep(1)
             st.rerun()
     nl_log = ctl.newsletter_logfile()
