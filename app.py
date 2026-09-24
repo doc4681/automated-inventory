@@ -7,12 +7,16 @@ Avvio:  streamlit run app.py   (o doppio click su "AVVIA PANNELLO.command")
 """
 
 import platform
+import sys
+from pathlib import Path
 
 import streamlit as st
 
-import controller as ctl
-from pipeline_ui import render_pipeline_tab
-from sync_ui import render_sync_tab
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # trova "pannello" da qualsiasi cartella
+
+from pannello import controller as ctl
+from pannello.pipeline_ui import render_pipeline_tab
+from pannello.sync_ui import render_sync_tab
 
 # La pipeline (scraper/downloader/scheduling) gira SOLO in locale sul Mac.
 # Su Streamlit Cloud (Linux) mostriamo solo il Sync inventario, che invece funziona.
@@ -20,7 +24,7 @@ IS_LOCAL_MAC = platform.system() == "Darwin"
 
 st.set_page_config(
     page_title="Vroomi — Pannello di Controllo",
-    page_icon="icon.png",
+    page_icon=str(Path(__file__).parent / "pannello" / "icon.png"),
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -48,7 +52,7 @@ with st.sidebar:
             st.write(f"**Ultimo merge:** {res['rows']} righe")
             st.caption(f"{res['name']} · {res['mtime']}")
         st.divider()
-        st.caption("Gira in locale su questo Mac. Credenziali in ~/.env.vroomi o credenziali.env.")
+        st.caption("Gira in locale su questo Mac. Credenziali in credenziali.env (o ~/.env.vroomi).")
     else:
         st.info("☁️ Versione **cloud**")
         st.caption("Qui è disponibile solo il Sync inventario. La pipeline "

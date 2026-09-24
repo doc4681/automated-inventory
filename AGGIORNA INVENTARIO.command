@@ -2,13 +2,13 @@
 # ════════════════════════════════════════════════════════════════════
 #  DOPPIO CLICK QUI per aggiornare il catalogo carmodel + MCWS.
 # ════════════════════════════════════════════════════════════════════
-# Tutta la logica sta in run_local.sh (unica fonte di verità: questo file
-# e lo scheduler automatico usano lo stesso script).
+# Tutta la logica sta in pipeline/run.sh (unica fonte di verità: questo file,
+# il pannello e la pianificazione automatica usano lo stesso script).
 # Il risultato finale finisce in:  RISULTATO/merged_products_LATEST.csv
 
 cd "$(dirname "$0")" || { echo "Cartella non trovata"; exit 1; }
 
-bash run_local.sh
+bash pipeline/run.sh
 STATUS=$?
 
 echo ""

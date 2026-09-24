@@ -3,39 +3,34 @@ product_merger.py
 Join tra carmodel_scraped_{ts}.csv (scraper) e mcws_inventory_{ts}.csv (downloader).
 Match: codice_produttore (carmodel) == Code (MCWS), normalizzati uppercase senza spazi.
 
-Legge RUN_TIMESTAMP da os.environ (settato da aggiorna_inventario.command).
-Fallback: usa il file più recente nella cartella output/ corrispondente.
+Legge RUN_TIMESTAMP da os.environ (impostato da pipeline/run.sh).
+Fallback: usa il file più recente in dati/carmodel/ e dati/mcws/.
 
-Output: merger/output/merged_products_{ts}.csv
+Output: dati/merged/merged_products_{ts}.csv
 """
 
 import csv
-import os
-from datetime import datetime
 from pathlib import Path
 
+from paths import CARMODEL_DIR, MCWS_DIR, MERGED_DIR, latest_file, output_file, run_timestamp
 
-def resolve_input(output_dir: Path, prefix: str, ts: str) -> Path:
-    """Restituisce il file con timestamp esatto, o il più recente se non trovato."""
-    exact = output_dir / f"{prefix}_{ts}.csv"
+
+def resolve_input(directory: Path, prefix: str) -> Path:
+    """Il file della run corrente (stesso timestamp) o, se manca, il più recente."""
+    exact = directory / f"{prefix}_{run_timestamp()}.csv"
     if exact.exists():
         return exact
-    # Fallback: file più recente con quel prefisso
-    candidates = sorted(output_dir.glob(f"{prefix}_*.csv"), key=lambda f: f.stat().st_mtime)
-    if candidates:
-        return candidates[-1]
-    raise FileNotFoundError(f"Nessun file {prefix}_*.csv in {output_dir}")
+    latest = latest_file(directory, prefix)
+    if latest:
+        return latest
+    raise FileNotFoundError(f"Nessun file {prefix}_*.csv in {directory}")
 
 
 def get_paths() -> tuple[Path, Path, Path]:
-    ts = os.environ.get("RUN_TIMESTAMP", datetime.now().strftime("%Y-%m-%d_%H%M"))
-    root = Path(__file__).parent.parent
-    carmodel_file = resolve_input(root / "scraper" / "output", "carmodel_scraped", ts)
-    mcws_file     = resolve_input(root / "downloader" / "output", "mcws_inventory", ts)
-    out_dir = Path(__file__).parent / "output"
-    out_dir.mkdir(exist_ok=True)
-    output_file = out_dir / f"merged_products_{ts}.csv"
-    return carmodel_file, mcws_file, output_file
+    carmodel_file = resolve_input(CARMODEL_DIR, "carmodel_scraped")
+    mcws_file = resolve_input(MCWS_DIR, "mcws_inventory")
+    return carmodel_file, mcws_file, output_file(MERGED_DIR, "merged_products")
+
 
 OUTPUT_FIELDS = [
     "codice_produttore",
