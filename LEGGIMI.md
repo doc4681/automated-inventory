@@ -36,6 +36,7 @@ Durante la run si apre una finestra di Chrome: è normale (serve a superare Clou
 | `pipeline/` | Il motore: scraper, downloader, merge, Shopify, newsletter, `run.sh` | ❌ |
 | `pannello/` | Il codice del pannello (e della scheda "Sync inventario") | ❌ |
 | `app.py`, `requirements.txt`, `.venv/` | Avvio pannello e dipendenze Python | ❌ |
+| `Vroomi-Newsletter/` | Pacchetto newsletter per il collaboratore (vedi sotto), con i suoi 3 script | ✅ se lo usi |
 | `_archivio/` | Roba vecchia, non usata. Si può cancellare. | ❌ |
 
 ## ⚙️ Come funziona (i 4 passi di `pipeline/run.sh`)
@@ -74,6 +75,12 @@ Come viene costruito il prodotto (uguale a quelli che hai già):
 
 Da Terminale: `bash pipeline/newsletter.sh --list` (elenco), `--index 1` (prova),
 `--index 1 --apply` (crea). Report di ogni run in `dati/newsletter/`, log in `logs/newsletter_*.log`.
+
+> ⚠️ Esiste anche la cartella **`Vroomi-Newsletter/`**: pacchetto autonomo per il collaboratore
+> (script `1 - PROVA`, `2 - CREA SCHEDE DRAFT`, `3 - CREA UNA NEWSLETTER`, istruzioni in
+> `Vroomi-Newsletter/LEGGIMI.txt`, credenziali in `Vroomi-Newsletter/credenziali.env`).
+> Fa lo stesso lavoro con regole in parte diverse (titolo con "|", barcode vuoto):
+> **da unificare** — vedi la PR.
 
 ## 🛍️ Shopify (opzionale): note → metafield `custom.notes`
 

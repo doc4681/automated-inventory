@@ -27,3 +27,7 @@ dati/
 RISULTATO/
 logs/
 _archivio/
+
+# Vroomi-Newsletter: report e log delle run (restano solo sul Mac)
+Vroomi-Newsletter/output/*
+!Vroomi-Newsletter/output/.gitkeep
