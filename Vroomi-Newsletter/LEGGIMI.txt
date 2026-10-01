@@ -31,24 +31,32 @@ PRIMA VOLTA — 3 PASSI
      Matteo). Contiene password: NON condividerla mai con link pubblici.
    (Se manca, lo script te lo dice.)
 
-2) SBLOCCO (solo la prima volta)
-   macOS blocca gli script scaricati da internet. Se al doppio click compare
-   « … non è stata aperta / Apple non è in grado di verificare … » (con solo
-   "Sposta nel Cestino / Fine"), sblocca TUTTO in una volta così:
+2) INSTALLAZIONE SENZA BLOCCHI DI macOS (consigliata, anche per aggiornare)
+   Se scarichi lo zip da Drive/WhatsApp/mail, macOS lo marca come "scaricato
+   da internet" e al doppio click può comparire « Apple non è in grado di
+   verificare… » (solo "Sposta nel Cestino / Fine"). Per evitarlo per sempre
+   installa così:
 
-   a) Apri il TERMINALE:  premi  ⌘ + Barra spaziatrice , scrivi  Terminale ,
-      premi Invio.
-   b) Nel Terminale scrivi questo, CON UNO SPAZIO alla fine, e NON premere
-      Invio:
-             xattr -cr
-   c) Dal Finder, TRASCINA la cartella  Vroomi-Newsletter  dentro la finestra
-      del Terminale: il percorso si scrive da solo.
-   d) Premi Invio.  (Non compare nessun messaggio: è normale.)
-   e) Chiudi il Terminale.
+   a) Apri il TERMINALE:  ⌘ + Barra spaziatrice , scrivi  Terminale , Invio.
+   b) Incolla questa riga (tutta) e premi Invio:
 
-   In alternativa, senza Terminale: Impostazioni di Sistema → Privacy e
-   Sicurezza → scorri in fondo → accanto al file bloccato premi "Apri
-   comunque" (ma va ripetuto per ciascuno dei 3 script).
+      curl -fsSL https://raw.githubusercontent.com/doc4681/automated-inventory/main/Vroomi-Newsletter/installa.sh | bash
+
+   c) Si apre la cartella  Vroomi-Newsletter  nella tua Inizio (~). Usa SOLO
+      quella e cancella le copie vecchie scaricate da Drive.
+      Se avevi già un credenziali.env in una copia vecchia (Scrivania,
+      Download, Documenti) viene copiato da solo; altrimenti copialo tu.
+   Per AGGIORNARE in futuro: rilancia la stessa riga (credenziali, report e
+   ambiente restano).
+
+   Se usi comunque lo zip e compare il blocco:
+   • Terminale → scrivi  xattr -cr  + spazio, trascina la cartella dentro,
+     Invio. Se compare "Operation not permitted": Impostazioni di Sistema →
+     Privacy e Sicurezza → Accesso completo al disco → attiva  Terminale ,
+     chiudi e riapri il Terminale e ripeti.
+   • Oppure lancia lo script dal Terminale: scrivi  bash  + spazio,
+     trascina dentro il file .command, Invio (così macOS non lo blocca mai).
+
 
 3) PROVA
    Doppio click su  « 1 - PROVA (non crea nulla) ».

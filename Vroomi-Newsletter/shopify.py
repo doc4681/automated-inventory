@@ -59,6 +59,7 @@ class Shopify:
         self.domain = domain
         self.url = f"https://{domain}/admin/api/{API_VERSION}/graphql.json"
         self.headers = {"X-Shopify-Access-Token": token, "Content-Type": "application/json"}
+        self._location_id: str | None = None
 
     @classmethod
     def from_env(cls) -> "Shopify":
@@ -111,11 +112,32 @@ class Shopify:
                             "status": n["product"]["status"]}
         return None
 
+    # ── magazzino ────────────────────────────────────────────────────────────
+    def location_id(self) -> str:
+        """Sede di magazzino dove caricare la quantità delle schede nuove:
+        SHOPIFY_LOCATION_ID se impostato (gid://shopify/Location/... o solo il
+        numero), altrimenti la prima sede attiva del negozio. Richiede gli scope
+        read_locations (per cercarla) e write_inventory (per scrivere la quantità)."""
+        if self._location_id:
+            return self._location_id
+        env = os.environ.get("SHOPIFY_LOCATION_ID", "").strip()
+        if env:
+            self._location_id = env if env.startswith("gid://") else f"gid://shopify/Location/{env}"
+            return self._location_id
+        q = "{ locations(first: 10) { nodes { id name isActive } } }"
+        nodes = self.gql(q)["locations"]["nodes"]
+        active = [n for n in nodes if n.get("isActive")]
+        if not active:
+            raise RuntimeError("nessuna sede di magazzino attiva trovata su Shopify")
+        self._location_id = active[0]["id"]
+        print(f"  [Shopify] magazzino: {active[0]['name']}", flush=True)
+        return self._location_id
+
     # ── creazione ────────────────────────────────────────────────────────────
     def create_draft_product(self, p: dict) -> dict:
         """Crea un prodotto DRAFT con 1 variante (sku, barcode, prezzo, costo,
-        magazzino tracciato e non vendibile a quantità 0) e la foto, in un'unica
-        chiamata productSet. `p` è il payload di run.build_payload."""
+        magazzino tracciato con la quantità di p["quantity"], non vendibile oltre
+        la giacenza) e la foto, in un'unica chiamata productSet. `p` è il payload di run.build_payload."""
         mutation = """
         mutation($input: ProductSetInput!) {
           productSet(synchronous: true, input: $input) {
@@ -134,6 +156,10 @@ class Shopify:
             variant["barcode"] = p["barcode"]
         if p.get("cost"):
             variant["inventoryItem"]["cost"] = p["cost"]
+        if p.get("quantity"):
+            variant["inventoryQuantities"] = [{"locationId": self.location_id(),
+                                               "name": "available",
+                                               "quantity": int(p["quantity"])}]
         pin = {
             "title": p["title"],
             "vendor": p.get("vendor", ""),

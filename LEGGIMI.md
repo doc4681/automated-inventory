@@ -88,7 +88,7 @@ Match per EAN→barcode, poi codice_produttore→SKU. Non sovrascrive e non canc
 
 - Si accende dal pannello (interruttore "Arricchimento Shopify") oppure con `ENABLE_SHOPIFY=1` in `credenziali.env`.
 - Credenziali: app **`Vroomi Enricher_Claude`** della Dev Dashboard Shopify
-  (dev.shopify.com → app → Settings → Credentials): `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET`, scope `read_products`/`write_products`.
+  (dev.shopify.com → app → Settings → Credentials): `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET`, scope `read_products`/`write_products`. Lo strumento Newsletter (quantità 1 sulle schede nuove) richiede anche `read_locations`, `read_inventory`, `write_inventory`.
 - Prova senza scrivere nulla: `.venv/bin/python pipeline/shopify_enricher.py` (aggiungi `--apply` per scrivere davvero, `--limit 50` per provare su pochi).
 
 ## 🆕 Installazione su un altro Mac
