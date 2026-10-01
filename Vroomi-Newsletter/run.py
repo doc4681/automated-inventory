@@ -26,6 +26,7 @@ import csv
 import sys
 import json
 import argparse
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -35,6 +36,19 @@ import catalog
 from shopify import Shopify
 
 OUT = Path(__file__).parent / "output"
+
+
+def quantita() -> int:
+    """Quantità caricata a magazzino su ogni scheda nuova. Si cambia con
+    NEWSLETTER_QUANTITA in credenziali.env (0 = non toccare il magazzino).
+    Letta al momento dell'uso: credenziali.env viene caricato dopo l'import."""
+    return int(os.environ.get("NEWSLETTER_QUANTITA", "1") or 0)
+
+MSG_SCOPE_MAGAZZINO = (
+    "Per caricare la quantità a magazzino l'app Shopify \"Vroomi Enricher_Claude\"\n"
+    "deve avere anche gli scope  read_locations, read_inventory, write_inventory.\n"
+    "Aggiungili su dev.shopify.com → app → Versions/Configuration → Access scopes,\n"
+    "rilascia la nuova versione e approvala nel negozio, poi riprova.")
 OUT.mkdir(exist_ok=True)
 
 # Indizi da CORSA: campionati/gare/team/numero di gara. NON includere GT3/GT2/GTE
@@ -208,6 +222,7 @@ def build_payload(p: scraper.Product, cat: catalog.Catalog) -> dict:
         "metafields": metafields,
         "sku": p.sku,
         "barcode": p.site_id,             # come i prodotti Vroomi: barcode = ID MCWS
+        "quantity": quantita(),
         "price": f"{price:.2f}",
         "cost": f"{p.cost:.2f}",
         "seo": {"title": f"{nice} Scale Model Car",
@@ -250,6 +265,16 @@ def main() -> int:
             # subito con un errore chiaro che fare tutto lo scraping per niente.
             print("\nERRORE: con Shopify non disponibile non posso creare le schede.\n"
                   "Controlla SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET in credenziali.env.")
+            sys.exit(1)
+
+    if args.apply and sh is not None and quantita():
+        # Controllo PRIMA dello scraping: se manca il permesso sul magazzino ci
+        # si ferma subito, invece di creare schede a quantità 0.
+        try:
+            sh.location_id()
+        except Exception as e:
+            print(f"\nERRORE: non riesco a leggere il magazzino Shopify ({e}).\n"
+                  + MSG_SCOPE_MAGAZZINO)
             sys.exit(1)
 
     if args.no_enrich:
@@ -368,6 +393,10 @@ def main() -> int:
                         except Exception as e:
                             status = f"ERRORE: {e}"
                             errors += 1
+                            if "ACCESS_DENIED" in str(e) or "access denied" in str(e).lower():
+                                print(f"  [{status}]\n\nERRORE: permesso negato da Shopify.\n"
+                                      + MSG_SCOPE_MAGAZZINO)
+                                return 1
                     else:
                         status = "DA-CREARE"
 
