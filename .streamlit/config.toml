@@ -2,5 +2,9 @@
 [client]
 toolbarMode = "viewer"          # niente pulsante "Deploy" e menu sviluppatore
 
-[theme]
-primaryColor = "#1E6FD9"
+[theme]                         # tema scuro: sfondo blu notte
+base = "dark"
+primaryColor = "#3B82F6"
+backgroundColor = "#0B1220"
+secondaryBackgroundColor = "#16213A"
+textColor = "#E5ECF6"

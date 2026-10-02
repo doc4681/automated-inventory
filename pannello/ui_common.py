@@ -31,7 +31,7 @@ CSS = """
               font-size: 1.2rem; font-weight: 700; margin: 1.6rem 0 .5rem 0; }
   .vr-step .n { display: inline-flex; align-items: center; justify-content: center;
                 width: 1.9rem; height: 1.9rem; border-radius: 50%;
-                background: #1E6FD9; color: #fff; font-size: 1rem; flex: none; }
+                background: #3B82F6; color: #fff; font-size: 1rem; flex: none; }
   .vr-card-icon  { font-size: 2.4rem; line-height: 1; margin-bottom: .4rem; }
   .vr-card-title { font-size: 1.35rem; font-weight: 800; margin-bottom: .3rem; }
   .vr-card-text  { font-size: 1rem; opacity: .8; min-height: 3.2rem; }
