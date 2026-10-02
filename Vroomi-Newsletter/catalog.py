@@ -4,6 +4,8 @@ catalog.py — anagrafica brand: trademark validi, markup per brand, calcolo pre
 File sorgente:
   Valid_Trademarks.txt   un brand per riga (stile UPPER/hyphen, es. OTTO-MOBILE)
   Vroomi_Markup.txt       'Brand<TAB o spazi>Markup%'  (es. 'Otto Mobile\t1,50')
+                          + righe 'COSTO SOTTO <euro>  <markup>' = ricarico fisso
+                          per i modelli economici (es. 'COSTO SOTTO 50\t2,30')
 Dentro automated-inventory vale la copia unica in ../config/ (la stessa usata da
 pipeline e pannello). Le copie in questa cartella servono solo quando la cartella
 gira da sola (zip per Giuliano).
@@ -68,25 +70,47 @@ def load_trademarks() -> dict[str, str]:
     return out
 
 
-def load_markup() -> dict[str, tuple[float, str]]:
-    """Ritorna {compact_key: (moltiplicatore, nome_originale)}. Salta l'header.
-    Il nome originale serve come `vendor` Shopify (in maiuscolo)."""
-    path = _find_file("Vroomi_Markup.txt")
-    out: dict[str, tuple[float, str]] = {}
+_TIER_RE = re.compile(r"^COSTO\s+SOTTO\s+(\d+(?:[.,]\d+)?)\s*(?:€|EUR|EURO)?$", re.I)
+
+
+def _markup_lines(path: Path):
+    """(nome, markup) per ogni riga 'Nome<TAB o spazi>1,50' del file markup."""
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if not line or line.lower().startswith("trademark"):
+        if not line or line.startswith("#") or line.lower().startswith("trademark"):
             continue
         # divide sull'ultimo blocco numerico (il markup) e prende il resto come nome
         m = re.match(r"^(.*?)[\t ]+([\d]+[.,][\d]+)\s*$", line)
         if not m:
             continue
-        name, mk = m.group(1).strip(), m.group(2).replace(",", ".")
         try:
-            out[compact_key(name)] = (float(mk), name)
+            yield m.group(1).strip(), float(m.group(2).replace(",", "."))
         except ValueError:
             continue
+
+
+def load_markup() -> dict[str, tuple[float, str]]:
+    """Ritorna {compact_key: (moltiplicatore, nome_originale)} dei brand. Salta
+    l'header e le righe 'COSTO SOTTO ...' (vedi load_cost_tiers). Il nome
+    originale serve come `vendor` Shopify (in maiuscolo)."""
+    out: dict[str, tuple[float, str]] = {}
+    for name, mk in _markup_lines(_find_file("Vroomi_Markup.txt")):
+        if not _TIER_RE.match(name):
+            out[compact_key(name)] = (mk, name)
     return out
+
+
+def load_cost_tiers() -> list[tuple[float, float]]:
+    """Fasce di costo dal file markup: righe 'COSTO SOTTO 50<TAB>2,30' significano
+    "se il costo MCWS è sotto 50 €, ricarico 2,30 (al posto di quello del brand)".
+    Ritorna [(soglia, markup)] ordinate per soglia crescente. Se il file non ne
+    ha, valgono le fasce storiche DEFAULT_COST_TIERS."""
+    tiers = []
+    for name, mk in _markup_lines(_find_file("Vroomi_Markup.txt")):
+        m = _TIER_RE.match(name)
+        if m:
+            tiers.append((float(m.group(1).replace(",", ".")), mk))
+    return sorted(tiers) or list(DEFAULT_COST_TIERS)
 
 
 # ── API pubblica ─────────────────────────────────────────────────────────────
@@ -94,6 +118,7 @@ class Catalog:
     def __init__(self) -> None:
         self.trademarks = load_trademarks()   # compact -> nome
         self.markup = load_markup()           # compact -> (float, nome)
+        self.cost_tiers = load_cost_tiers()   # [(soglia €, markup)]
 
     def is_valid(self, brand: str) -> bool:
         return compact_key(brand) in self.trademarks
@@ -132,22 +157,24 @@ def round_90(value: float) -> float:
     return round(euros + 1 + 0.90, 2)
 
 
-# Stesse soglie del pannello (pannello/logic_v03.py): i modelli economici hanno
-# un ricarico più alto. Così il prezzo non cambia al primo "Adeguamento Markup".
-COST_THRESHOLD_LOW, MARKUP_LOW = 10.0, 2.2
-COST_THRESHOLD_MID, MARKUP_MID = 20.0, 1.9
+# Fasce usate solo se Vroomi_Markup.txt non ha righe 'COSTO SOTTO ...'
+# (le stesse del pannello, pannello/logic_v03.py).
+DEFAULT_COST_TIERS = ((10.0, 2.2), (20.0, 1.9))
 
 
-def effective_markup(cost: float, brand_markup: float) -> float:
-    if cost < COST_THRESHOLD_LOW:
-        return MARKUP_LOW
-    if cost < COST_THRESHOLD_MID:
-        return MARKUP_MID
+def effective_markup(cost: float, brand_markup: float,
+                     tiers=DEFAULT_COST_TIERS) -> float:
+    """Ricarico da applicare: quello della prima fascia di costo in cui il costo
+    rientra (es. sotto 50 € -> 2,30), altrimenti quello del brand."""
+    for threshold, mk in tiers:
+        if cost < threshold:
+            return mk
     return brand_markup
 
 
-def compute_price(cost: float, markup: float, style: str = "90") -> float:
-    raw = cost * effective_markup(cost, markup)
+def compute_price(cost: float, markup: float, style: str = "90",
+                  tiers=DEFAULT_COST_TIERS) -> float:
+    raw = cost * effective_markup(cost, markup, tiers)
     if style == "90":
         return round_90(raw)
     return round(raw, 2)

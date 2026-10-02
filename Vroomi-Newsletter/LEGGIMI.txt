@@ -105,3 +105,9 @@ DOMANDE FREQUENTI
    del sito è lenta, il programma ritenta da solo.
 • Per modificare brand o markup: file  Valid_Trademarks.txt  e
    Vroomi_Markup.txt  (chiedi a Matteo prima di cambiarli).
+• Ricarico dei modelli economici: in  Vroomi_Markup.txt  la riga
+      COSTO SOTTO 50      2,30
+   vuol dire "se il costo MCWS è sotto 50 €, prezzo = costo × 2,30" (al posto
+   del ricarico del brand). Cambia la cifra o il ricarico lì; puoi aggiungere
+   altre fasce (es.  COSTO SOTTO 10   2,50 ): vale la prima in cui il costo
+   rientra. Nel repo il file da modificare è  config/Vroomi_Markup.txt .
