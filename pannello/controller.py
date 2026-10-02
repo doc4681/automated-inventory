@@ -423,6 +423,19 @@ def schedule_status() -> str:
     return "attivo" if r.returncode == 0 else "sospeso"
 
 
+def schedule_other_folder() -> str | None:
+    """Se la pianificazione esiste ma lancia una ALTRA cartella Vroomi (es. una
+    copia vecchia), ritorna quel percorso; altrimenti None."""
+    try:
+        txt = PLIST_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if str(RUN_SCRIPT) in txt:
+        return None
+    m = re.search(r"<string>([^<]*?)/pipeline/run\.sh</string>", txt)
+    return m.group(1) if m else "un'altra cartella"
+
+
 def schedule_enable() -> tuple[bool, str]:
     """Genera/installa il plist e attiva la pianificazione per questa macchina."""
     try:
