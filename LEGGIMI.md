@@ -29,7 +29,7 @@ Si apre su **"Cosa vuoi fare?"** con due scelte principali; ogni pagina è guida
 
 | Pagina | A cosa serve |
 |---|---|
-| 📦 **Aggiorna l'inventario** | Carichi l'export prodotti di Shopify (il listino MCWS è già quello scaricato in automatico, oppure lo carichi tu) e scarichi il file Excel/CSV con disponibilità, costi e prezzi aggiornati da importare su Shopify. |
+| 📦 **Aggiorna l'inventario** | **In automatico** (serve la chiave Shopify): niente file da caricare, legge i prodotti da Shopify, usa il listino MCWS scaricato (o ne scarica uno nuovo), premi **Controlla** e poi **Applica su Shopify**. Oppure **con i file**, come prima: carichi l'export e scarichi il file da importare. |
 | 🆕 **Crea prodotti dalle newsletter** | Scrivi il numero della newsletter (o scegli tutte le recenti), premi **Controlla** (non crea niente) e poi **Crea le bozze su Shopify**. Mostra l'elenco dei prodotti creati / da creare. |
 | 🔁 **Catalogo fornitori** | L'ultimo catalogo carmodel + MCWS da scaricare, **Aggiorna adesso** con l'avanzamento passo per passo, l'interruttore dell'aggiornamento automatico. |
 | ⚙️ **Impostazioni** | Password MCWS e chiave Shopify (si scrivono lì, finiscono in `credenziali.env`), pulsanti per modificare marchi e ricarichi. |
@@ -48,7 +48,7 @@ Durante la run si apre una finestra di Chrome: è normale (serve a superare Clou
 | `logs/` | Un log per ogni run (`run_<data>.log`) | 🔍 solo se qualcosa va storto |
 | `dati/` | File intermedi e storico (ultimi 15 per tipo, pulizia automatica) | ❌ |
 | `pipeline/` | Il motore: scraper, downloader, merge, Shopify, `run.sh` | ❌ |
-| `pannello/` | Il codice del pannello (una pagina per file: `home_ui`, `inventario_ui`, `newsletter_ui`, `catalogo_ui`, `impostazioni_ui`) | ❌ |
+| `pannello/` | Il codice del pannello (una pagina per file: `home_ui`, `inventario_ui` + `inventario_auto_ui`, `newsletter_ui`, `catalogo_ui`, `impostazioni_ui`) e `inventario_sync.py` (inventario automatico) | ❌ |
 | `app.py`, `.streamlit/`, `requirements.txt`, `.venv/` | Avvio e aspetto del pannello, dipendenze Python | ❌ |
 | `Vroomi-Newsletter/` | Newsletter MCWS → bozze Shopify (vedi sotto): usato dal pannello e da Giuliano | ✅ |
 | `_archivio/` | Roba vecchia, non usata. Si può cancellare. | ❌ |
@@ -148,7 +148,31 @@ in `logs/run_<data>.log` (righe con ✗).
 
 ## 📦 "Aggiorna l'inventario" (pannello)
 
-Strumento **separato** dal catalogo: carichi i CSV (Shopify + listino MCWS/BBR) e scarichi il file
-di aggiornamento quantità/costi/prezzi. Il listino MCWS può essere quello scaricato in automatico
-dal catalogo (`dati/mcws/`, stesso formato di `MCWS_stocklist.csv`). Logica in `pannello/logic.py` (formato originale) e
-`pannello/logic_v03.py` (formato Products.csv + markup). Funziona anche su Streamlit Cloud (`app.py`).
+Due modi, stessa logica di calcolo (`pannello/logic_v03.py`: disponibilità, costi, prezzi con i
+ricarichi, tag SALE, PRE-ORDER mai toccati).
+
+**⚡ In automatico** (sul Mac, serve la chiave Shopify) — come per le newsletter, niente file:
+
+| Prima (3 file) | Adesso |
+|---|---|
+| Export prodotti da Shopify | Letto **direttamente da Shopify** |
+| Listino MCWS | L'ultimo scaricato dal catalogo automatico, oppure **«Scaricane uno nuovo adesso»** (2-3 min, si apre Chrome) |
+| Giacenze BBR | Lo carichi **una volta**: il pannello lo ricorda (`dati/bbr/`) e ti avvisa se ha più di 3 giorni |
+| Importare il file su Shopify | **«Applica su Shopify»**: scrive quantità, costo, prezzo, prezzo barrato e tag SALE |
+
+1. Premi **🔍 Controlla**: non cambia niente, mostra quanti prodotti tornano disponibili / diventano
+   esauriti / cambiano prezzo, con l'elenco (scaricabile in Excel).
+2. Se va bene premi **✅ Applica queste N modifiche su Shopify** (usa gli stessi listini del controllo).
+
+Protezioni: un listino MCWS scaricato con meno di 1000 righe (o meno della metà del precedente) viene
+scartato; se più del 30% dei prodotti disponibili diventerebbe esaurito **non applica niente**
+finché non spunti «applica lo stesso». Rilanciare è sicuro: riscrive solo quello che è ancora diverso.
+La quantità va nella sede di magazzino principale (o `SHOPIFY_LOCATION_ID` in `credenziali.env`).
+Scope dell'app Shopify: `read_products`, `write_products`, `read_inventory`, `write_inventory`,
+`read_locations` (gli stessi dello strumento newsletter). Report in `dati/inventario/`, log in
+`logs/inventario_<data>.log`. Da Terminale: `.venv/bin/python -m pannello.inventario_sync`
+(controllo) e `--apply` (applica); opzioni `--solo-prezzi`, `--mcws-nuovo`, `--senza-bbr`.
+
+**📄 Con i file**, come prima (anche su Streamlit Cloud, `app.py`): carichi i CSV (Shopify + listino
+MCWS/BBR) e scarichi il file di aggiornamento. Logica in `pannello/logic.py` (formato originale) e
+`pannello/logic_v03.py` (formato Products.csv + markup).
