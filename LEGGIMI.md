@@ -17,8 +17,21 @@ Se una run fallisce, il risultato precedente **non viene toccato**.
 |---|---|
 | Non fare niente | Niente: la pianificazione automatica è attiva (ogni 2 giorni, 07:00). |
 | Aggiornare adesso | Doppio click su **`AGGIORNA INVENTARIO.command`** (~25 min, lascia il Mac acceso). |
-| Vedere lo stato, il log, accendere/spegnere l'automatico | Doppio click su **`AVVIA PANNELLO.command`** → si apre nel browser. |
-| Mettere su Shopify i prodotti di una newsletter MCWS | Pannello → sezione **📰 Newsletter** (vedi sotto). |
+| Usare il pannello | Doppio click su **`AVVIA PANNELLO.command`** → si apre nel browser (vedi sotto). |
+| Aggiornare disponibilità, costi e prezzi su Shopify | Pannello → **📦 Aggiorna l'inventario**. |
+| Mettere su Shopify i prodotti di una newsletter MCWS | Pannello → **🆕 Crea prodotti dalle newsletter** (vedi sotto). |
+| Vedere lo stato del catalogo, accendere/spegnere l'automatico | Pannello → **🔁 Catalogo fornitori**. |
+
+### 🖥️ Il pannello
+
+Si apre su **"Cosa vuoi fare?"** con due scelte principali; ogni pagina è guidata a passi numerati.
+
+| Pagina | A cosa serve |
+|---|---|
+| 📦 **Aggiorna l'inventario** | Carichi l'export prodotti di Shopify (il listino MCWS è già quello scaricato in automatico, oppure lo carichi tu) e scarichi il file Excel/CSV con disponibilità, costi e prezzi aggiornati da importare su Shopify. |
+| 🆕 **Crea prodotti dalle newsletter** | Scrivi il numero della newsletter (o scegli tutte le recenti), premi **Controlla** (non crea niente) e poi **Crea le bozze su Shopify**. Mostra l'elenco dei prodotti creati / da creare. |
+| 🔁 **Catalogo fornitori** | L'ultimo catalogo carmodel + MCWS da scaricare, **Aggiorna adesso** con l'avanzamento passo per passo, l'interruttore dell'aggiornamento automatico. |
+| ⚙️ **Impostazioni** | Password MCWS e chiave Shopify (si scrivono lì, finiscono in `credenziali.env`), pulsanti per modificare marchi e ricarichi. |
 
 Durante la run si apre una finestra di Chrome: è normale (serve a superare Cloudflare), **non chiuderla**.
 
@@ -34,8 +47,8 @@ Durante la run si apre una finestra di Chrome: è normale (serve a superare Clou
 | `logs/` | Un log per ogni run (`run_<data>.log`) | 🔍 solo se qualcosa va storto |
 | `dati/` | File intermedi e storico (ultimi 15 per tipo, pulizia automatica) | ❌ |
 | `pipeline/` | Il motore: scraper, downloader, merge, Shopify, `run.sh` | ❌ |
-| `pannello/` | Il codice del pannello (e della scheda "Sync inventario") | ❌ |
-| `app.py`, `requirements.txt`, `.venv/` | Avvio pannello e dipendenze Python | ❌ |
+| `pannello/` | Il codice del pannello (una pagina per file: `home_ui`, `inventario_ui`, `newsletter_ui`, `catalogo_ui`, `impostazioni_ui`) | ❌ |
+| `app.py`, `.streamlit/`, `requirements.txt`, `.venv/` | Avvio e aspetto del pannello, dipendenze Python | ❌ |
 | `Vroomi-Newsletter/` | Newsletter MCWS → bozze Shopify (vedi sotto): usato dal pannello e da Giuliano | ✅ |
 | `_archivio/` | Roba vecchia, non usata. Si può cancellare. | ❌ |
 
@@ -50,7 +63,7 @@ I file scartati finiscono in `dati/scartati/`. Una sola run alla volta: se ne pa
 
 ## ⏰ Esecuzione automatica
 
-Si attiva/sospende dal **pannello** (sezione "Esecuzione automatica"). È un job di macOS
+Si attiva/sospende dal **pannello** (🔁 Catalogo fornitori → "Aggiorna da solo"). È un job di macOS
 (`launchd`, `~/Library/LaunchAgents/com.vroomi.inventory.plist`): parte ogni 2 giorni alle 07:00.
 Se a quell'ora il Mac dorme, parte appena si risveglia; se è spento, salta a quella successiva.
 
@@ -62,8 +75,9 @@ solo i marchi in `Valid_Trademarks.txt` **con un ricarico** in `Vroomi_Markup.tx
 su Shopify in **BOZZA** i prodotti che non ci sono ancora. Funziona su Mac **Intel e Apple Silicon**.
 
 Due modi di usarlo, stesso programma:
-- **Pannello** → sezione 📰: scrivi l'ID della newsletter (es. `15538`, il numero nel suo link;
-  vuoto = tutte), premi **🔍 Prova** (non scrive nulla) e poi **🛍️ Crea su Shopify in BOZZA**.
+- **Pannello** → 🆕 **Crea prodotti dalle newsletter**: scrivi il numero della newsletter (es. `15538`,
+  il numero nel suo link) o scegli tutte le recenti, premi **🔍 Controlla** (non crea niente) e poi
+  **✅ Crea le bozze su Shopify**.
 - **Script con doppio click** dentro `Vroomi-Newsletter/` (quelli che usa Giuliano):
   `1 - PROVA`, `2 - CREA SCHEDE DRAFT` (tutte), `3 - CREA UNA NEWSLETTER` (per ID).
   Istruzioni in `Vroomi-Newsletter/LEGGIMI.txt`.
@@ -86,7 +100,7 @@ copie di marchi/ricarichi; `credenziali.env` va compilato sul suo Mac partendo d
 Aggiunge la nota del catalogo ai prodotti **già presenti** nello store che non ce l'hanno.
 Match per EAN→barcode, poi codice_produttore→SKU. Non sovrascrive e non cancella mai note esistenti.
 
-- Si accende dal pannello (interruttore "Arricchimento Shopify") oppure con `ENABLE_SHOPIFY=1` in `credenziali.env`.
+- Si accende dal pannello (🔁 Catalogo fornitori → Opzioni avanzate → "Scrivi anche le note") oppure con `ENABLE_SHOPIFY=1` in `credenziali.env`.
 - Credenziali: app **`Vroomi Enricher_Claude`** della Dev Dashboard Shopify
   (dev.shopify.com → app → Settings → Credentials): `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET`, scope `read_products`/`write_products`. Lo strumento Newsletter (quantità 1 sulle schede nuove) richiede anche `read_locations`, `read_inventory`, `write_inventory`.
 - Prova senza scrivere nulla: `.venv/bin/python pipeline/shopify_enricher.py` (aggiungi `--apply` per scrivere davvero, `--limit 50` per provare su pochi).
@@ -95,17 +109,17 @@ Match per EAN→barcode, poi codice_produttore→SKU. Non sovrascrive e non canc
 
 1. Copia la cartella (senza `credenziali.env`, `.venv/`, `dati/`, `logs/`).
 2. Serve **Google Chrome** e **Python 3** (`brew install python`).
-3. Rinomina `credenziali.esempio.env` → `credenziali.env` e compila `MCWS_USERNAME` / `MCWS_PASSWORD`
-   (tra virgolette **singole**).
-4. Doppio click su `AVVIA PANNELLO.command`: al primo avvio prepara tutto da solo (1-2 min).
-   Poi dal pannello attiva l'esecuzione automatica.
+3. Doppio click su `AVVIA PANNELLO.command`: al primo avvio prepara tutto da solo (1-2 min).
+4. Nel pannello: ⚙️ **Impostazioni** → inserisci nome utente e password MCWS (e la chiave Shopify),
+   poi 🔁 **Catalogo fornitori** → accendi "Aggiorna da solo".
 
 Se macOS dice che il file *"è danneggiato"* o *"sviluppatore non identificato"*: apri il Terminale,
 scrivi `xattr -cr ` (con lo spazio), trascina dentro la cartella del progetto, premi Invio.
 
 ## 🔔 Se qualcosa va storto
 
-Apri l'ultimo `logs/run_<data>.log` (o il pannello, che lo mostra) e cerca le righe con ✗.
+Il pannello (🔁 Catalogo fornitori) mostra i problemi dell'ultimo aggiornamento; il registro completo è
+in `logs/run_<data>.log` (righe con ✗).
 
 | Nel log vedi… | Causa / soluzione |
 |---|---|
@@ -115,8 +129,9 @@ Apri l'ultimo `logs/run_<data>.log` (o il pannello, che lo mostra) e cerca le ri
 | `login rifiutato da MCWS` | Password MCWS cambiata: aggiornala in `credenziali.env`. |
 | `copertura brand … mancanti: …` | Un marchio di `Valid_Trademarks.txt` non esiste più su carmodel: toglilo dal file. |
 
-## 🔄 Scheda "Sync inventario" del pannello
+## 📦 "Aggiorna l'inventario" (pannello)
 
 Strumento **separato** dal catalogo: carichi i CSV (Shopify + listino MCWS/BBR) e scarichi il file
-di aggiornamento quantità/costi/prezzi. Logica in `pannello/logic.py` (formato originale) e
+di aggiornamento quantità/costi/prezzi. Il listino MCWS può essere quello scaricato in automatico
+dal catalogo (`dati/mcws/`, stesso formato di `MCWS_stocklist.csv`). Logica in `pannello/logic.py` (formato originale) e
 `pannello/logic_v03.py` (formato Products.csv + markup). Funziona anche su Streamlit Cloud (`app.py`).

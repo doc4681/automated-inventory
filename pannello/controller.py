@@ -1,5 +1,5 @@
 """
-controller.py — logica del Pannello di Controllo Vroomi (usata da app.py / pipeline_ui.py).
+controller.py — logica del Pannello di Controllo Vroomi (usata dalle pagine pannello/*_ui.py).
 Tutto portabile: i percorsi derivano dalla posizione di questo file, niente path fissi.
 
 Funzioni: stato credenziali, interruttore arricchimento Shopify, lancio pipeline in
@@ -9,6 +9,7 @@ corrente), ultimo risultato.
 
 from __future__ import annotations  # compatibilità Python 3.9 (sintassi "X | None")
 
+import json
 import os
 import re
 import signal
@@ -30,6 +31,9 @@ def env_file() -> Path:
 RUN_SCRIPT = REPO / "pipeline" / "run.sh"
 LOG_DIR = REPO / "logs"
 RESULT_DIR = REPO / "RISULTATO"
+MCWS_DIR = REPO / "dati" / "mcws"              # listini MCWS scaricati dalla pipeline
+TRADEMARKS_FILE = REPO / "config" / "Valid_Trademarks.txt"
+MARKUP_FILE = REPO / "config" / "Vroomi_Markup.txt"
 LOCK_PID = LOG_DIR / ".run.lock" / "pid"       # scritto da run.sh finché la run è attiva
 
 # Scheduling (launchd)
@@ -45,8 +49,9 @@ def _read_env_text() -> str:
 
 def _env_value(key: str) -> str | None:
     """Legge un export KEY="..." dal file credenziali attivo (senza eseguirlo)."""
-    m = re.search(rf'^\s*export\s+{re.escape(key)}=["\']?([^"\'\n]*)', _read_env_text(), re.M)
-    return m.group(1) if m else None
+    m = re.search(rf"""^\s*export\s+{re.escape(key)}=(?:'([^'\n]*)'|"([^"\n]*)"|([^\s#]*))""",
+                  _read_env_text(), re.M)
+    return next((g for g in m.groups() if g is not None), "") if m else None
 
 
 def credentials_status() -> dict:
@@ -82,6 +87,40 @@ def create_local_env_from_template() -> bool:
     except OSError:
         pass
     return True
+
+
+def save_credentials(values: dict) -> None:
+    """Scrive in credenziali.env i valori NON vuoti di values ({"MCWS_USERNAME": ...}).
+    I campi lasciati vuoti restano com'erano. Valori tra virgolette singole (come
+    chiede il template), quindi non possono contenere apostrofi o a capo."""
+    for k, v in values.items():
+        if "'" in v or "\n" in v:
+            raise ValueError(f"{k}: il valore contiene un apostrofo o un a capo.")
+    if not env_file().exists():
+        create_local_env_from_template()
+    f = env_file() if env_file().exists() else LOCAL_ENV
+    txt = f.read_text(encoding="utf-8") if f.exists() else ""
+    for k, v in values.items():
+        if not v:
+            continue
+        line = f"export {k}='{v}'"
+        pattern = rf'^\s*export\s+{re.escape(k)}=.*$'
+        if re.search(pattern, txt, re.M):
+            txt = re.sub(pattern, lambda _m: line, txt, count=1, flags=re.M)
+        else:
+            if txt and not txt.endswith("\n"):
+                txt += "\n"
+            txt += line + "\n"
+    f.write_text(txt, encoding="utf-8")
+    try:
+        f.chmod(0o600)
+    except OSError:
+        pass
+
+
+def env_value_set(key: str) -> str:
+    """Valore corrente (solo per campi NON segreti, es. lo username MCWS)."""
+    return (_env_value(key) or "").strip()
 
 
 def set_enable_shopify(on: bool) -> None:
@@ -173,6 +212,7 @@ def stop_pipeline() -> bool:
 # Unico strumento: Vroomi-Newsletter/run.py (lo stesso dei 3 script per Giuliano).
 NEWSLETTER_DIR = REPO / "Vroomi-Newsletter"
 NEWSLETTER_STATE = LOG_DIR / ".newsletter_run"      # "<pid> <logfile>" dell'ultima run
+NEWSLETTER_INFO = LOG_DIR / ".newsletter_info.json"  # modalità e ID dell'ultima run
 CRED_KEYS = ("MCWS_USERNAME", "MCWS_PASSWORD", "SHOPIFY_STORE_DOMAIN",
              "SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET", "SHOPIFY_ADMIN_TOKEN")
 
@@ -201,12 +241,32 @@ def start_newsletter(ids: str, apply: bool) -> Path:
         proc = subprocess.Popen(args, stdout=lf, stderr=subprocess.STDOUT,
                                 cwd=str(NEWSLETTER_DIR), env=env, start_new_session=True)
     NEWSLETTER_STATE.write_text(f"{proc.pid} {logfile}", encoding="utf-8")
+    NEWSLETTER_INFO.write_text(json.dumps({"apply": apply, "ids": ids}), encoding="utf-8")
     return logfile
+
+
+def newsletter_info() -> dict:
+    """{"apply": bool, "ids": "15538,…"} dell'ultima run (vuoto se sconosciuto)."""
+    try:
+        return json.loads(NEWSLETTER_INFO.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def stop_newsletter() -> bool:
+    pid, _ = _newsletter_state()
+    if not pid or not _pid_alive(pid):
+        return False
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        return True
+    except OSError:
+        return False
 
 
 def _newsletter_state() -> tuple[int | None, Path | None]:
     try:
-        pid, log = NEWSLETTER_STATE.read_text(encoding="utf-8").split(" ", 1)
+        pid, log = NEWSLETTER_STATE.read_text(encoding="utf-8").strip().split(" ", 1)
         return int(pid), Path(log)
     except (OSError, ValueError):
         return None, None
@@ -228,6 +288,79 @@ def tail_log(path: Path | None, n: int = 200) -> str:
     return "\n".join(lines[-n:])
 
 
+def newsletter_summary(path: Path | None) -> dict:
+    """Riassunto leggibile di una run newsletter, ricavato dal suo log."""
+    text = Path(path).read_text(encoding="utf-8", errors="replace") if path and Path(path).exists() else ""
+
+    def num(label):
+        m = re.search(rf"{re.escape(label)}\s*(\d+)", text)
+        return int(m.group(1)) if m else 0
+
+    report = re.search(r"^Report: (.+)$", text, re.M)
+    errors = [l.strip() for l in text.splitlines() if l.strip().startswith("ERRORE")]
+    skipped = re.search(r"^Scartate \(\d+\): (.+)$", text, re.M)
+    return {
+        "newsletters": num("Newsletter valide da elaborare:"),
+        "none_found": "NESSUNA newsletter" in text,
+        "skipped": skipped.group(1) if skipped else "",
+        "created": num("creati:"),
+        "existing": num("esistenti (saltati):"),
+        "to_create": num("da creare (dry-run):"),
+        "no_price": num("Prodotti senza prezzo (saltati):"),
+        "create_errors": num("ERRORI in creazione su Shopify:"),
+        "errors": errors,
+        "report": Path(report.group(1).strip()) if report else None,
+    }
+
+
+# ─────────────────────────── Stato della pipeline (dal log) ────────────────────
+PIPELINE_STEPS = {
+    1: "Scarico i prodotti da carmodel.com",
+    2: "Scarico il listino MCWS",
+    3: "Unisco i due elenchi",
+    4: "Scrivo le note su Shopify",
+}
+
+
+def pipeline_summary(path: Path | None) -> dict | None:
+    """Stato leggibile di una run della pipeline, ricavato dal suo log."""
+    if not path or not Path(path).exists():
+        return None
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    steps = re.findall(r"[▶▷] \[(\d)/4\]", text)
+    merged = re.search(r"RIEPILOGO.*merged: (\d+)", text)
+    m = re.search(r"run_(\d{4}-\d{2}-\d{2})_(\d{2})(\d{2})", Path(path).name)
+    started = datetime.strptime(f"{m.group(1)} {m.group(2)}:{m.group(3)}", "%Y-%m-%d %H:%M") if m else None
+    return {
+        "step": int(steps[-1]) if steps else 0,
+        "finished": "RIEPILOGO" in text,
+        "merged": int(merged.group(1)) if merged else 0,
+        "problems": [l.strip().lstrip("✗").strip() for l in text.splitlines()
+                     if l.strip().startswith("✗") or l.strip().startswith("ERRORE")],
+        "started": started,
+    }
+
+
+# ─────────────────────────── File e cartelle ─────────────────────────────────
+def latest_mcws_stocklist() -> dict | None:
+    """L'ultimo listino MCWS scaricato dalla pipeline (stesso formato di MCWS_stocklist.csv)."""
+    files = sorted(MCWS_DIR.glob("mcws_inventory_*.csv"),
+                   key=lambda p: p.stat().st_mtime) if MCWS_DIR.exists() else []
+    if not files:
+        return None
+    f = files[-1]
+    return {"path": f, "mtime": datetime.fromtimestamp(f.stat().st_mtime)}
+
+
+def open_in_mac(path: Path, textedit: bool = False) -> bool:
+    """Apre un file/cartella sul Mac (TextEdit per i file di testo)."""
+    try:
+        args = ["open", "-e", str(path)] if textedit else ["open", str(path)]
+        return subprocess.run(args, capture_output=True).returncode == 0
+    except OSError:
+        return False
+
+
 # ─────────────────────────── Ultimo risultato ────────────────────────────────
 def latest_result() -> dict | None:
     f = RESULT_DIR / "merged_products_LATEST.csv"
@@ -238,8 +371,9 @@ def latest_result() -> dict | None:
             return None
         f = cands[-1]
     rows = max(0, sum(1 for _ in f.open(encoding="utf-8", errors="replace")) - 1)
+    mtime = datetime.fromtimestamp(f.stat().st_mtime)
     return {"path": f, "name": f.name, "rows": rows,
-            "mtime": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M")}
+            "mtime": mtime.strftime("%Y-%m-%d %H:%M"), "when": mtime}
 
 
 # ─────────────────────────── Scheduling (launchd) ─────────────────────────────
