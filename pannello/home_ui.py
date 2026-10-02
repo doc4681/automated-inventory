@@ -60,8 +60,10 @@ def render_home():
             "📦", "Aggiorna l'inventario",
             "Aggiorna <b>disponibilità, costi e prezzi</b> dei prodotti che sono già nel "
             "negozio Shopify, confrontandoli con i listini dei fornitori.",
-            "Ti serve: l'export dei prodotti da Shopify.<br>Alla fine scarichi un file da "
-            "importare su Shopify.",
+            ("Non serve caricare niente: legge i prodotti da Shopify.<br>Prima controlli, "
+             "poi applichi le modifiche con un click." if creds and creds["shopify"] else
+             "Ti serve: l'export dei prodotti da Shopify.<br>Alla fine scarichi un file da "
+             "importare su Shopify."),
             "Aggiorna l'inventario  →", "inventario", "card_inventario")
     with c2:
         _big_card(

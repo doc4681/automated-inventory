@@ -1,7 +1,10 @@
 """
 inventario_ui.py — pagina "Aggiorna l'inventario".
-Carichi l'export prodotti di Shopify (+ listino MCWS e, se vuoi, giacenze BBR) e
-scarichi il file con disponibilità/costi/prezzi aggiornati da importare su Shopify.
+Due modi:
+  • in automatico (Mac con chiave Shopify): pannello/inventario_auto_ui.py — legge i
+    prodotti da Shopify, usa i listini già scaricati e applica le modifiche;
+  • con i file (qui sotto, anche su Streamlit Cloud): carichi l'export prodotti di
+    Shopify (+ listino MCWS e, se vuoi, giacenze BBR) e scarichi il file da importare.
 La logica di calcolo è invariata: pannello/logic.py e pannello/logic_v03.py.
 """
 
@@ -20,6 +23,7 @@ from pannello.logic_v03 import (
     process_inventory_v03, process_markup_only, OUTPUT_PREFIX as OUTPUT_PREFIX_V03, COL_MCWS_CODE,
 )
 from pannello.ui_common import IS_MAC, go, num, page_header, step, when
+from pannello.inventario_auto_ui import render_auto as _render_auto
 
 TRADEMARKS_FILE = ctl.TRADEMARKS_FILE
 MARKUP_FILE = ctl.MARKUP_FILE
@@ -30,6 +34,7 @@ MARKUP_FILE = ctl.MARKUP_FILE
 TEXT_FORCED_COLUMNS = [COL_SHOPIFY_SKU, COL_MCWS_CODE, "Our Code"]
 
 FULL, PRICES, LEGACY = "full", "prices", "legacy"
+AUTO, MANUAL = "auto", "manual"
 MODES = {
     FULL: ("Disponibilità, costi e prezzi  (consigliato)",
            "Segna come esauriti i prodotti che i fornitori non hanno più, rimette disponibili "
@@ -202,9 +207,26 @@ def _mcws_source(mode):
 
 def render_inventario():
     page_header("📦 Aggiorna l'inventario",
-                "Prepara il file con disponibilità, costi e prezzi aggiornati, "
-                "da importare su Shopify.")
+                "Aggiorna disponibilità, costi e prezzi dei prodotti del negozio "
+                "confrontandoli con i listini dei fornitori.")
 
+    auto_ok = IS_MAC and ctl.credentials_status()["shopify"]
+    if auto_ok:
+        how = st.radio(
+            "Come vuoi lavorare?", [AUTO, MANUAL], horizontal=True, key="inv_how",
+            disabled=ctl.inventory_running(),
+            format_func=lambda o: ("⚡ In automatico  (consigliato)" if o == AUTO
+                                   else "📄 Con i file, come prima"))
+        if how == AUTO:
+            _render_auto()
+            return
+    elif IS_MAC:
+        st.info("💡 Inserendo la **chiave Shopify** nelle Impostazioni non serve più caricare "
+                "l'export dei prodotti: il pannello li legge da solo e applica le modifiche.")
+    _render_manual()
+
+
+def _render_manual():
     # ── 1. Cosa aggiornare ───────────────────────────────────────────────────
     step(1, "Cosa vuoi aggiornare?")
     mode = st.radio("Cosa vuoi aggiornare?", list(MODES), label_visibility="collapsed",

@@ -144,6 +144,15 @@ def set_enable_shopify(on: bool) -> None:
 
 # ─────────────────────────── Pipeline in background ───────────────────────────
 def _pid_alive(pid: int) -> bool:
+    # Un lavoro lanciato dal pannello (newsletter, inventario) è un processo figlio:
+    # finito, resta "zombie" e kill(0) lo darebbe ancora vivo. Lo raccogliamo qui.
+    try:
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except ChildProcessError:
+        pass                   # non è un nostro figlio (es. run.sh della pianificazione)
+    except OSError:
+        return False
     try:
         os.kill(pid, 0)        # segnale 0 = test esistenza processo
         return True
@@ -311,6 +320,148 @@ def newsletter_summary(path: Path | None) -> dict:
         "errors": errors,
         "report": Path(report.group(1).strip()) if report else None,
     }
+
+
+# ─────────────────────────── Inventario automatico → Shopify ───────────────────
+# pannello/inventario_sync.py: legge i prodotti da Shopify, li confronta con i
+# listini (MCWS automatico, BBR ultimo caricato) e, se richiesto, applica le modifiche.
+INVENTORY_STATE = LOG_DIR / ".inventario_run"        # "<pid> <logfile>" dell'ultima run
+INVENTORY_INFO = LOG_DIR / ".inventario_info.json"   # opzioni dell'ultima run
+BBR_DIR = REPO / "dati" / "bbr"                      # giacenze BBR caricate nel pannello
+KEEP_BBR = 15
+
+
+def start_inventory(prices_only: bool, apply: bool, mcws_fresh: bool = False,
+                    mcws: str = "", bbr: str = "", use_bbr: bool = True,
+                    force: bool = False) -> Path:
+    """Lancia pannello/inventario_sync.py in background. apply=False → solo controllo."""
+    if inventory_running():
+        raise RuntimeError("Un aggiornamento dell'inventario è già in corso.")
+    LOG_DIR.mkdir(exist_ok=True)
+    logfile = LOG_DIR / f"inventario_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.log"
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    for k in CRED_KEYS:
+        v = _env_value(k)
+        if v:
+            env[k] = v
+    py = REPO / ".venv" / "bin" / "python"
+    args = [str(py if py.exists() else "python3"), "-u", "-m", "pannello.inventario_sync"]
+    if prices_only:
+        args.append("--solo-prezzi")
+    else:
+        if mcws:
+            args += ["--mcws", mcws]
+        elif mcws_fresh:
+            args.append("--mcws-nuovo")
+        if not use_bbr:
+            args.append("--senza-bbr")
+        elif bbr:
+            args += ["--bbr", bbr]
+    if apply:
+        args.append("--apply")
+    if force:
+        args.append("--forza")
+    with open(logfile, "w") as lf:
+        proc = subprocess.Popen(args, stdout=lf, stderr=subprocess.STDOUT,
+                                cwd=str(REPO), env=env, start_new_session=True)
+    INVENTORY_STATE.write_text(f"{proc.pid} {logfile}", encoding="utf-8")
+    INVENTORY_INFO.write_text(json.dumps({"apply": apply, "prices_only": prices_only,
+                                          "use_bbr": use_bbr}), encoding="utf-8")
+    return logfile
+
+
+def _inventory_state() -> tuple[int | None, Path | None]:
+    try:
+        pid, log = INVENTORY_STATE.read_text(encoding="utf-8").strip().split(" ", 1)
+        return int(pid), Path(log)
+    except (OSError, ValueError):
+        return None, None
+
+
+def inventory_running() -> bool:
+    pid, _ = _inventory_state()
+    return bool(pid) and _pid_alive(pid)
+
+
+def inventory_logfile() -> Path | None:
+    return _inventory_state()[1]
+
+
+def inventory_info() -> dict:
+    try:
+        return json.loads(INVENTORY_INFO.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def stop_inventory() -> bool:
+    pid, _ = _inventory_state()
+    if not pid or not _pid_alive(pid):
+        return False
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        return True
+    except OSError:
+        return False
+
+
+def inventory_summary(path: Path | None) -> dict:
+    """Riassunto leggibile di una run dell'inventario, ricavato dal suo log."""
+    text = Path(path).read_text(encoding="utf-8", errors="replace") if path and Path(path).exists() else ""
+
+    def num(label):
+        m = re.search(rf"{re.escape(label)}\s*(\d+)", text)
+        return int(m.group(1)) if m else 0
+
+    def line(label):
+        m = re.search(rf"^{re.escape(label)}\s*(.+)$", text, re.M)
+        return m.group(1).strip() if m else ""
+
+    steps = re.findall(r"▶ \[(\d)/4\]", text)
+    return {
+        "step": int(steps[-1]) if steps else 0,
+        "finished": "FINE" in text.splitlines()[-3:] if text else False,
+        "read": num("Prodotti letti da Shopify:"),
+        "to_update": num("Prodotti da aggiornare:"),
+        "back": num("tornano disponibili:"),
+        "out": num("diventano esauriti:"),
+        "prices": num("prezzi cambiati:"),
+        "costs": num("costi cambiati:"),
+        "available": num("disponibili ora nel negozio:"),
+        "applied": num("Aggiornati su Shopify:"),
+        "apply_errors": num("Errori su Shopify:"),
+        "applied_done": "Aggiornati su Shopify:" in text,
+        "too_many": "TROPPI ESAURITI" in text,
+        "blocked": "BLOCCATO" in text,
+        "mcws_fallback": "ATTENZIONE: uso l'ultimo listino" in text,
+        "mcws_file": line("File MCWS usato:"),
+        "bbr_file": line("File BBR usato:"),
+        "mcws_line": line("Listino MCWS:"),
+        "bbr_line": line("Giacenze BBR:"),
+        "errors": [l.strip() for l in text.splitlines() if l.strip().startswith("ERRORE")],
+        "report": Path(line("Report:")) if line("Report:") else None,
+    }
+
+
+def latest_bbr() -> dict | None:
+    """L'ultimo file di giacenze BBR caricato nel pannello."""
+    files = sorted(BBR_DIR.glob("bbr_giacenze_*"), key=lambda p: p.stat().st_mtime) \
+        if BBR_DIR.exists() else []
+    if not files:
+        return None
+    return {"path": files[-1], "mtime": datetime.fromtimestamp(files[-1].stat().st_mtime)}
+
+
+def save_bbr(filename: str, data: bytes) -> Path:
+    """Salva le giacenze BBR caricate, così la prossima volta non serve ricaricarle."""
+    BBR_DIR.mkdir(parents=True, exist_ok=True)
+    ext = Path(filename).suffix.lower() or ".csv"
+    dest = BBR_DIR / f"bbr_giacenze_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}{ext}"
+    dest.write_bytes(data)
+    for old in sorted(BBR_DIR.glob("bbr_giacenze_*"), key=lambda p: p.stat().st_mtime)[:-KEEP_BBR]:
+        old.unlink(missing_ok=True)
+    return dest
 
 
 # ─────────────────────────── Stato della pipeline (dal log) ────────────────────
