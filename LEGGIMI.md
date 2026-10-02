@@ -17,6 +17,7 @@ Se una run fallisce, il risultato precedente **non viene toccato**.
 |---|---|
 | Non fare niente | Niente: la pianificazione automatica è attiva (ogni 2 giorni, 07:00). |
 | Aggiornare adesso | Doppio click su **`AGGIORNA INVENTARIO.command`** (~25 min, lascia il Mac acceso). |
+| Installare o aggiornare tutto da GitHub | Una riga nel Terminale (vedi **Installazione e aggiornamento**). |
 | Usare il pannello | Doppio click su **`AVVIA PANNELLO.command`** → si apre nel browser (vedi sotto). |
 | Aggiornare disponibilità, costi e prezzi su Shopify | Pannello → **📦 Aggiorna l'inventario**. |
 | Mettere su Shopify i prodotti di una newsletter MCWS | Pannello → **🆕 Crea prodotti dalle newsletter** (vedi sotto). |
@@ -105,16 +106,32 @@ Match per EAN→barcode, poi codice_produttore→SKU. Non sovrascrive e non canc
   (dev.shopify.com → app → Settings → Credentials): `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET`, scope `read_products`/`write_products`. Lo strumento Newsletter (quantità 1 sulle schede nuove) richiede anche `read_locations`, `read_inventory`, `write_inventory`.
 - Prova senza scrivere nulla: `.venv/bin/python pipeline/shopify_enricher.py` (aggiungi `--apply` per scrivere davvero, `--limit 50` per provare su pochi).
 
-## 🆕 Installazione su un altro Mac
+## 🆕 Installazione e aggiornamento (da GitHub, senza blocchi di macOS)
 
-1. Copia la cartella (senza `credenziali.env`, `.venv/`, `dati/`, `logs/`).
-2. Serve **Google Chrome** e **Python 3** (`brew install python`).
-3. Doppio click su `AVVIA PANNELLO.command`: al primo avvio prepara tutto da solo (1-2 min).
-4. Nel pannello: ⚙️ **Impostazioni** → inserisci nome utente e password MCWS (e la chiave Shopify),
-   poi 🔁 **Catalogo fornitori** → accendi "Aggiorna da solo".
+Serve **Google Chrome** e **Python 3.10 o più recente** (https://www.python.org/downloads/).
 
-Se macOS dice che il file *"è danneggiato"* o *"sviluppatore non identificato"*: apri il Terminale,
-scrivi `xattr -cr ` (con lo spazio), trascina dentro la cartella del progetto, premi Invio.
+1. Apri il **Terminale** (⌘ + barra spaziatrice → `Terminale` → Invio).
+2. Incolla questa riga e premi Invio:
+
+   ```
+   curl -fsSL https://raw.githubusercontent.com/doc4681/automated-inventory/main/installa.sh | bash
+   ```
+
+3. Si crea (o si aggiorna) la cartella **`Vroomi`** nella tua Inizio e **si apre da solo il pannello**.
+   Le volte dopo: doppio click su `AVVIA PANNELLO.command` dentro quella cartella.
+4. Nel pannello: ⚙️ **Impostazioni** → password MCWS e chiave Shopify (se trova un `credenziali.env`
+   in una copia vecchia lo riusa da solo). Chi usa l'aggiornamento automatico: 🔁 **Catalogo
+   fornitori** → accendi "Aggiorna da solo" (se puntava alla cartella vecchia, il pannello lo dice
+   e lo sposta con un click).
+
+**Per aggiornare** rilancia la stessa riga: vengono sostituiti solo i file del programma; password,
+`dati/`, `RISULTATO/`, `logs/` e l'ambiente Python restano. Per usare un'altra cartella:
+`… | bash -s -- "$HOME/Desktop/Vroomi"`.
+
+Perché niente blocchi: macOS mette in "quarantena" solo i file scaricati da browser, Drive, WhatsApp o
+mail; quelli scaricati dal Terminale si aprono subito. Se hai comunque una copia scaricata a mano e
+macOS dice *"è danneggiato"* o *"sviluppatore non identificato"*: Terminale → `xattr -cr ` (con lo
+spazio), trascina dentro la cartella, Invio.
 
 ## 🔔 Se qualcosa va storto
 

@@ -13,23 +13,55 @@ echo "║       VROOMI — Pannello di Controllo          ║"
 echo "╚══════════════════════════════════════════════╝"
 echo ""
 
+# ── Python: serve il 3.10 o più recente (le newsletter non girano col 3.9,
+#    che è il python3 "di sistema" di molti Mac) ───────────────────────────────
+trova_python() {
+  local c
+  for c in python3.13 python3.12 python3.11 python3.10 \
+           /Library/Frameworks/Python.framework/Versions/3.1[0-9]/bin/python3 \
+           /opt/homebrew/bin/python3 /usr/local/bin/python3 python3; do
+    if command -v "$c" >/dev/null 2>&1 &&
+       "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+      command -v "$c"; return 0
+    fi
+  done
+  return 1
+}
+PY_OK=$(trova_python || true)
+
+# Ambiente creato in passato con un Python troppo vecchio: lo ricrea (se c'è
+# un Python adatto), così funzionano anche le newsletter.
+if [[ -x ".venv/bin/python" && -n "$PY_OK" ]] &&
+   ! ./.venv/bin/python -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+  echo "▶ Aggiorno l'ambiente a un Python più recente (1-2 minuti)…"
+  rm -rf .venv
+fi
+
 # ── Primo avvio: crea l'ambiente Python e installa le dipendenze ─────────────
 if [[ ! -x ".venv/bin/python" ]]; then
+  if [[ -z "$PY_OK" ]]; then
+    echo "❌ Serve Python 3.10 o più recente (trovato: $(python3 --version 2>/dev/null || echo 'nessuno'))."
+    echo "   Installalo da https://www.python.org/downloads/ (pulsante giallo) e riprova."
+    read -rp "Premi Invio per chiudere…" _; exit 1
+  fi
   echo "▶ Primo avvio: preparo l'ambiente (1-2 minuti)…"
-  if ! python3 -m venv .venv; then
-    echo "❌ Errore nella creazione dell'ambiente. Python 3 è installato?"
+  if ! "$PY_OK" -m venv .venv; then
+    echo "❌ Errore nella creazione dell'ambiente Python."
     read -rp "Premi Invio per chiudere…" _; exit 1
   fi
   ./.venv/bin/python -m pip install --upgrade pip >/dev/null 2>&1
   echo "▶ Installo le dipendenze…"
   if ! ./.venv/bin/python -m pip install -r requirements.txt; then
-    echo "❌ Errore nell'installazione delle dipendenze."
+    echo "❌ Errore nell'installazione delle dipendenze. Controlla la connessione e riprova."
     read -rp "Premi Invio per chiudere…" _; exit 1
   fi
 fi
 
-# ── Verifica che streamlit ci sia e sia abbastanza recente (≥ 1.37) ──────────
-if ! ./.venv/bin/python -c "import streamlit as s, sys; sys.exit(tuple(map(int, s.__version__.split('.')[:2])) < (1, 37))" 2>/dev/null; then
+# ── Verifica che ci sia tutto: pannello (streamlit ≥ 1.37), inventario e
+#    newsletter/catalogo (Chrome automatico). Se manca qualcosa lo installa. ──
+if ! ./.venv/bin/python -c "
+import sys, streamlit as s, pandas, openpyxl, xlrd, requests, bs4, selenium, undetected_chromedriver
+sys.exit(tuple(map(int, s.__version__.split('.')[:2])) < (1, 37))" 2>/dev/null; then
   echo "▶ Aggiorno le dipendenze…"
   ./.venv/bin/python -m pip install -r requirements.txt
 fi

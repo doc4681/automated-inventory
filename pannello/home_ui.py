@@ -34,7 +34,7 @@ def _catalog_status() -> str:
         step = s["step"] if s else 0
         return f"🔵 Aggiornamento in corso{f' (passo {step} di 4)' if step else ''}…"
     res = ctl.latest_result()
-    auto = ctl.schedule_status() == "attivo"
+    auto = ctl.schedule_status() == "attivo" and not ctl.schedule_other_folder()
     last = f"Ultimo: {when(res['when'])} · {num(res['rows'])} prodotti" if res else "Mai aggiornato"
     return f"{last}<br>Aggiornamento automatico: {'🟢 acceso' if auto else '⚪️ spento'}"
 

@@ -2,6 +2,21 @@
 ║        VROOMI — da Newsletter modelcarswholesale a Shopify           ║
 ╚════════════════════════════════════════════════════════════════════╝
 
+NOVITÀ — PANNELLO COMPLETO (consigliato)
+────────────────────────────────────────
+C'è un pannello con pulsanti che fa tutto da una pagina sola: creare i
+prodotti dalle newsletter (Controlla / Crea le bozze) e aggiornare
+l'inventario. Si installa con UNA riga nel Terminale, senza blocchi di macOS:
+
+   curl -fsSL https://raw.githubusercontent.com/doc4681/automated-inventory/main/installa.sh | bash
+
+Si crea la cartella  Vroomi  nella tua Inizio e il pannello si apre da solo
+nel browser. Le volte dopo: doppio click su  AVVIA PANNELLO.command .
+Le password si inseriscono nel pannello (⚙️ Impostazioni).
+
+Gli script qui sotto restano validi per chi preferisce usarli.
+
+
 A COSA SERVE
 ────────────
 Legge le "Newsletter recenti" di modelcarswholesale.com, tiene solo i brand

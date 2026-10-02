@@ -26,6 +26,13 @@ def _toggle_schedule():
                                          + (f" ({msg})" if msg else ""))
 
 
+def _use_this_folder():
+    ok, msg = ctl.schedule_enable()
+    if not ok:
+        st.session_state["cat_error"] = ("Non sono riuscito a spostare l'aggiornamento automatico."
+                                         + (f" ({msg})" if msg else ""))
+
+
 def _toggle_shopify():
     ctl.set_enable_shopify(st.session_state["cat_shopify"])
 
@@ -105,6 +112,12 @@ def render_catalogo():
     # ── Aggiornamento ────────────────────────────────────────────────────────
     step(2, "Aggiornamento")
     with st.container(border=True):
+        other = ctl.schedule_other_folder()
+        if other:
+            st.warning(f"L'aggiornamento automatico usa ancora un'altra cartella Vroomi "
+                       f"(`{other}`), non questa.")
+            st.button("Usa questa cartella per l'aggiornamento automatico", type="primary",
+                      key="cat_fix_folder", on_click=_use_this_folder)
         st.toggle("**Aggiorna da solo** ogni 2 giorni alle 7:00",
                   value=ctl.schedule_status() == "attivo", key="cat_auto",
                   on_change=_toggle_schedule)
