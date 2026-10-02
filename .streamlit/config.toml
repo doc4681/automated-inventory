@@ -1,0 +1,6 @@
+# Aspetto del pannello (letto da Streamlit all'avvio dalla cartella del progetto).
+[client]
+toolbarMode = "viewer"          # niente pulsante "Deploy" e menu sviluppatore
+
+[theme]
+primaryColor = "#1E6FD9"

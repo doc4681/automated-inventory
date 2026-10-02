@@ -28,8 +28,8 @@ if [[ ! -x ".venv/bin/python" ]]; then
   fi
 fi
 
-# ── Verifica che streamlit ci sia (es. dopo un aggiornamento dei requisiti) ──
-if ! ./.venv/bin/python -c "import streamlit" 2>/dev/null; then
+# ── Verifica che streamlit ci sia e sia abbastanza recente (≥ 1.37) ──────────
+if ! ./.venv/bin/python -c "import streamlit as s, sys; sys.exit(tuple(map(int, s.__version__.split('.')[:2])) < (1, 37))" 2>/dev/null; then
   echo "▶ Aggiorno le dipendenze…"
   ./.venv/bin/python -m pip install -r requirements.txt
 fi
