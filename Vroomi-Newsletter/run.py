@@ -210,7 +210,7 @@ def build_payload(p: scraper.Product, cat: catalog.Catalog) -> dict:
                            "value": json.dumps([stag])})
 
     markup = cat.markup_for(p.trademark)
-    price = catalog.compute_price(p.cost, markup)
+    price = catalog.compute_price(p.cost, markup, tiers=cat.cost_tiers)
     nice = " ".join(w.capitalize() for w in f"{p.brand_auto} {car_model} {year}".split())
 
     return {
@@ -232,7 +232,7 @@ def build_payload(p: scraper.Product, cat: catalog.Catalog) -> dict:
         "image_alt": f"{nice} {stag} scale model car by {vendor} — Vroomi",
         # meta per report
         "_cost": p.cost,
-        "_markup": catalog.effective_markup(p.cost, markup),
+        "_markup": catalog.effective_markup(p.cost, markup, cat.cost_tiers),
         "_trademark": p.trademark,
         "_car_model": car_model,
         "_year": year,
