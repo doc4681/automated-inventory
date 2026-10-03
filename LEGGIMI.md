@@ -176,3 +176,16 @@ Scope dell'app Shopify: `read_products`, `write_products`, `read_inventory`, `wr
 **📄 Con i file**, come prima (anche su Streamlit Cloud, `app.py`): carichi i CSV (Shopify + listino
 MCWS/BBR) e scarichi il file di aggiornamento. Logica in `pannello/logic.py` (formato originale) e
 `pannello/logic_v03.py` (formato Products.csv + markup).
+
+### ⏪ Versione precedente (temporanea, link Streamlit separato)
+
+Finché non sistemiamo la nuova funzione, la pagina **"Sync inventario"** com'era prima della nuova
+interfaccia è disponibile come app separata: cartella `inventario_precedente/` (con la sua copia
+congelata di `logic.py` e `logic_v03.py`; marchi e ricarichi restano quelli di `config/`).
+
+- **Streamlit Cloud**: *Create app* → stesso repository, **Main file path**
+  `inventario_precedente/app.py` → nuovo link, separato da quello del pannello.
+- **In locale**: `.venv/bin/streamlit run inventario_precedente/app.py`
+
+Quando la nuova funzione è a posto: si cancella l'app su Streamlit Cloud e la cartella
+`inventario_precedente/`.
