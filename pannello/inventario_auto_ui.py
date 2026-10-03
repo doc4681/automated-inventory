@@ -15,7 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from pannello import controller as ctl
-from pannello.ui_common import go, num, step, when
+from pannello.ui_common import go, job_error, num, step, when
 
 FULL, PRICES = "full", "prices"
 MODES = {
@@ -147,9 +147,7 @@ def _result(log: Path) -> None:
                 f"{when(_started(log))}")
 
     if s["errors"] and not s["report"]:
-        st.error("Il lavoro si è fermato per un errore:\n\n" + "\n\n".join(s["errors"][:3]))
-        if any("credenziali" in e.lower() or "client_credentials" in e for e in s["errors"]):
-            st.button("🔑 Controlla le password", on_click=go, args=("impostazioni",), key="inva_err_settings")
+        job_error(s["errors"], key="inva_err_settings")
         with st.expander("🔎 Dettaglio tecnico (registro completo)"):
             st.code(ctl.tail_log(log, 400) or "—", language="text")
         return
