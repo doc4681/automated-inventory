@@ -5,17 +5,28 @@ Pagina iniziale "Cosa vuoi fare?" con due attività principali:
   • Aggiorna l'inventario          (pannello/inventario_ui.py)
   • Crea prodotti dalle newsletter (pannello/newsletter_ui.py)
 e, sotto, Catalogo fornitori automatico (pannello/catalogo_ui.py) e Impostazioni.
-Su Streamlit Cloud (Linux) resta disponibile solo "Aggiorna l'inventario".
+Su Streamlit Cloud (Linux), PER ORA, si apre la pagina di prima ("Sync inventario", con la
+sua logica di calcolo congelata in inventario_precedente/) finché non sistemiamo la nuova.
 
 Avvio:  streamlit run app.py   (o doppio click su "AVVIA PANNELLO.command")
 """
 
+import platform
 import sys
 from pathlib import Path
 
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # trova "pannello" da qualsiasi cartella
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))  # trova "pannello" da qualsiasi cartella
+
+# TEMPORANEO: online (non sul Mac) torna l'interfaccia di prima con le regole di prima.
+# Per tornare alla nuova basta togliere questo blocco.
+if platform.system() != "Darwin":
+    sys.path.insert(0, str(ROOT / "inventario_precedente"))
+    from pagina import render as render_precedente
+    render_precedente()
+    st.stop()
 
 from pannello.ui_common import apply_style, current_page
 from pannello.home_ui import render_home
