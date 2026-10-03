@@ -177,15 +177,14 @@ Scope dell'app Shopify: `read_products`, `write_products`, `read_inventory`, `wr
 MCWS/BBR) e scarichi il file di aggiornamento. Logica in `pannello/logic.py` (formato originale) e
 `pannello/logic_v03.py` (formato Products.csv + markup).
 
-### ⏪ Versione precedente (temporanea, link Streamlit separato)
+### ⏪ Versione precedente (temporanea, sul link Streamlit Cloud)
 
-Finché non sistemiamo la nuova funzione, la pagina **"Sync inventario"** com'era prima della nuova
-interfaccia è disponibile come app separata: cartella `inventario_precedente/` (con la sua copia
-congelata di `logic.py` e `logic_v03.py`; marchi e ricarichi restano quelli di `config/`).
+Finché non sistemiamo la nuova funzione, **il link Streamlit Cloud** (`app.py` quando non gira sul
+Mac) mostra la pagina di prima: **"Sync inventario"** con i tre formati (Originale, V03, Solo
+prezzi) e la sua copia congelata di `logic.py` e `logic_v03.py` nella cartella
+`inventario_precedente/`. Marchi e ricarichi restano quelli di `config/`. Il pannello sul Mac non
+cambia.
 
-- **Streamlit Cloud**: *Create app* → stesso repository, **Main file path**
-  `inventario_precedente/app.py` → nuovo link, separato da quello del pannello.
-- **In locale**: `.venv/bin/streamlit run inventario_precedente/app.py`
-
-Quando la nuova funzione è a posto: si cancella l'app su Streamlit Cloud e la cartella
-`inventario_precedente/`.
+- Per avviarla da sola: `.venv/bin/streamlit run inventario_precedente/app.py`
+- Per tornare alla nuova: togliere il blocco "TEMPORANEO" in `app.py` e la cartella
+  `inventario_precedente/`.
