@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from pannello import controller as ctl
-from pannello.ui_common import go, num, page_header, step, when
+from pannello.ui_common import go, job_error, num, page_header, step, when
 
 STATUS_LABELS = {
     "DA-CREARE": "🆕 Da creare",
@@ -90,7 +90,7 @@ def _result(log: Path) -> None:
             st.caption("«manca markup» = il marchio non ha un ricarico: aggiungilo nel file dei "
                        "ricarichi (Impostazioni). «non in Valid_Trademarks» = non è tra i marchi che vendi.")
     elif s["errors"] and not (s["created"] or s["existing"] or s["to_create"]):
-        st.error("Il lavoro si è fermato per un errore:\n\n" + "\n\n".join(s["errors"][:3]))
+        job_error(s["errors"], key="nl_err_settings")
     elif apply:
         st.success(f"✅ **{num(s['created'])} bozze create** su Shopify. "
                    f"{num(s['existing'])} prodotti erano già nel negozio e sono stati saltati.")

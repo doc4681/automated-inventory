@@ -51,14 +51,19 @@ def _env_value(key: str) -> str | None:
     """Legge un export KEY="..." dal file credenziali attivo (senza eseguirlo)."""
     m = re.search(rf"""^\s*export\s+{re.escape(key)}=(?:'([^'\n]*)'|"([^"\n]*)"|([^\s#]*))""",
                   _read_env_text(), re.M)
-    return next((g for g in m.groups() if g is not None), "") if m else None
+    return next((g for g in m.groups() if g is not None), "").strip() if m else None
+
+
+# Valori finti dei file di esempio: se sono ancora lì, la password non è stata inserita.
+PLACEHOLDERS = {"tua-email@esempio.com"}
 
 
 def credentials_status() -> dict:
     """Quali credenziali sono presenti E compilate (mai i valori).
     NB: serve il valore non vuoto — il template ha le righe ma vuote."""
     def filled(key):
-        return bool((_env_value(key) or "").strip())
+        v = (_env_value(key) or "").strip()
+        return bool(v) and v not in PLACEHOLDERS
 
     mcws = filled("MCWS_USERNAME") and filled("MCWS_PASSWORD")
     shopify = filled("SHOPIFY_ADMIN_TOKEN") or (

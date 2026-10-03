@@ -103,3 +103,23 @@ def when(dt: datetime | None) -> str:
 def num(n: int) -> str:
     """1234 → '1.234'."""
     return f"{n:,}".replace(",", ".")
+
+
+def job_error(errors: list, key: str) -> None:
+    """Errore di un lavoro in background, spiegato a parole. Se il problema sono le
+    password (MCWS rifiuta il login, Shopify rifiuta la chiave) porta alle Impostazioni."""
+    text = "\n\n".join(errors[:3])
+    low = text.lower()
+    if any(w in low for w in ("login rifiutato", "login non riuscito", "vuoti")):
+        st.error("🔑 **modelcarswholesale.com (MCWS) non ha accettato nome utente o password** "
+                 "salvati su questo Mac.")
+        st.markdown("Apri **⚙️ Impostazioni**, riscrivi il nome utente e la password che usi per "
+                    "entrare su modelcarswholesale.com, premi **Salva** e riprova.")
+        st.button("🔑 Reinserisci le password MCWS", type="primary", key=key,
+                  on_click=go, args=("impostazioni",))
+        with st.expander("Messaggio originale"):
+            st.text(text)
+        return
+    st.error("Il lavoro si è fermato per un errore:\n\n" + text)
+    if "credenziali" in low or "client_credentials" in low or "shopify" in low:
+        st.button("🔑 Controlla le password", key=key, on_click=go, args=("impostazioni",))

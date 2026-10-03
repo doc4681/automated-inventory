@@ -48,10 +48,25 @@ mkdir -p "$DEST"
       cp "$f" "$DEST/$f"
     done )
 
-# Password: se manca credenziali.env, riusa quello di una copia vecchia
+# Password: se manca credenziali.env, riusa quello di una copia vecchia. Prima
+# quello della cartella Vroomi-Newsletter installata dal Terminale (è quello che
+# il collaboratore usa davvero), poi il più RECENTE tra gli altri; scarta i file
+# ancora da compilare (password vuota o email di esempio).
+cred_valido() {
+  grep -Eq "^[[:space:]]*export[[:space:]]+MCWS_PASSWORD=['\"]?[^'\"[:space:]]" "$1" &&
+    ! grep -q "tua-email@esempio.com" "$1"
+}
 if [[ ! -f "$DEST/credenziali.env" ]]; then
-  OLD=$(find "$HOME/Desktop" "$HOME/Downloads" "$HOME/Documents" "$HOME" -maxdepth 3 \
-          -name credenziali.env -not -path "$DEST/*" 2>/dev/null | head -1 || true)
+  OLD=""
+  if [[ -f "$HOME/Vroomi-Newsletter/credenziali.env" ]] && cred_valido "$HOME/Vroomi-Newsletter/credenziali.env"; then
+    OLD="$HOME/Vroomi-Newsletter/credenziali.env"
+  else
+    while IFS= read -r -d '' f; do
+      cred_valido "$f" || continue
+      if [[ -z "$OLD" || "$f" -nt "$OLD" ]]; then OLD="$f"; fi    # il più recente
+    done < <(find "$HOME/Desktop" "$HOME/Downloads" "$HOME/Documents" "$HOME" -maxdepth 3 \
+               -name credenziali.env -not -path "$DEST/*" -print0 2>/dev/null || true)
+  fi
   if [[ -n "$OLD" ]]; then
     cp "$OLD" "$DEST/credenziali.env"
     chmod 600 "$DEST/credenziali.env"
