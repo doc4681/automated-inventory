@@ -5,7 +5,7 @@ Alerte		1,50
 Autoart		1,50
 CMR		1,50
 Eligor		1,50
-Esval Models	1,50
+Esval Model	1,70
 Kyosho		1,50
 LCD Models	1,50
 Looksmart	1,50
@@ -52,3 +52,5 @@ CMC    1,50
 ROS-MODEL    1,50
 MINIPARTES   1,70
 TRIPLE9    1,70
+MR-MODELS  1,70
+MATRIX SCALE MODELS  1,70
