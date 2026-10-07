@@ -105,9 +105,26 @@ def num(n: int) -> str:
     return f"{n:,}".replace(",", ".")
 
 
-def job_error(errors: list, key: str) -> None:
+def _mcws_diagnosis(log) -> None:
+    """Cosa ha visto il programma sul sito MCWS (righe del log + foto della pagina):
+    da mandare a chi fa assistenza se il login continua a non andare."""
+    if log is None:
+        return
+    from pannello import controller as ctl
+    lines, shot = ctl.mcws_diagnosis(log)
+    if not lines and not shot:
+        return
+    with st.expander("🔎 Cosa ha visto il programma su MCWS (da inviare all'assistenza)"):
+        if lines:
+            st.code("\n".join(lines), language="text")
+        if shot:
+            st.image(str(shot), caption=f"La pagina di MCWS al momento dell'errore ({shot.name})")
+
+
+def job_error(errors: list, key: str, log=None) -> None:
     """Errore di un lavoro in background, spiegato a parole. Se il problema sono le
-    password (MCWS rifiuta il login, Shopify rifiuta la chiave) porta alle Impostazioni."""
+    password (MCWS rifiuta il login, Shopify rifiuta la chiave) porta alle Impostazioni.
+    log: registro del lavoro, per mostrare la diagnosi del login MCWS."""
     text = "\n\n".join(errors[:3])
     low = text.lower()
     if "accesso a mcws non completato" in low:
@@ -123,6 +140,7 @@ def job_error(errors: list, key: str) -> None:
         st.button("🔑 Controlla le password MCWS", key=key, on_click=go, args=("impostazioni",))
         with st.expander("Messaggio originale"):
             st.text(text)
+        _mcws_diagnosis(log)
         return
     if any(w in low for w in ("login rifiutato", "login non riuscito", "vuoti")):
         st.error("🔑 **modelcarswholesale.com (MCWS) non ha accettato nome utente o password** "
@@ -133,6 +151,7 @@ def job_error(errors: list, key: str) -> None:
                   on_click=go, args=("impostazioni",))
         with st.expander("Messaggio originale"):
             st.text(text)
+        _mcws_diagnosis(log)
         return
     st.error("Il lavoro si è fermato per un errore:\n\n" + text)
     if "credenziali" in low or "client_credentials" in low or "shopify" in low:
