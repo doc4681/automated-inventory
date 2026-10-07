@@ -25,11 +25,18 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
     NoSuchWindowException, InvalidSessionIdException, WebDriverException, TimeoutException,
+    StaleElementReferenceException,
 )
 
 
 class CFTimeout(Exception):
     """Cloudflare non superato nei tempi: ritentabile con una sessione Chrome nuova."""
+
+
+class LoginUnclear(CFTimeout):
+    """Dopo l'invio il sito e' rimasto sulla pagina di login senza dire perche'
+    (pagina lenta, Cloudflare, campi svuotati dal JavaScript...): si riprova con
+    una sessione Chrome nuova prima di concludere che la password e' sbagliata."""
 
 
 LOGIN_URL = "https://www.modelcarswholesale.com/it/login"
@@ -136,40 +143,98 @@ def login(driver: uc.Chrome, username: str, password: str) -> None:
             "ERRORE: MCWS_USERNAME o MCWS_PASSWORD VUOTI — controlla credenziali.env "
             "(campi tra virgolette, senza spazi).")
 
-    u = driver.find_element(By.ID, "username"); u.clear(); u.send_keys(username)
-    p = driver.find_element(By.ID, "password"); p.clear(); p.send_keys(password)
-    # Verifica che i campi contengano davvero i valori (JS a volte li resetta / la
-    # pagina non era pronta): se no, riscrive una volta prima di inviare.
-    try:
-        got_u = driver.execute_script("return (document.getElementById('username')||{}).value") or ""
-        got_p = driver.execute_script("return (document.getElementById('password')||{}).value") or ""
-    except Exception:
-        got_u = got_p = ""
-    if len(got_u) != len(username) or len(got_p) != len(password):
-        print(f"  Campi non riempiti bene (utente {len(got_u)}/{len(username)}, "
-              f"pw {len(got_p)}/{len(password)}) — riscrivo")
-        time.sleep(1)
-        u.clear(); u.send_keys(username)
-        p.clear(); p.send_keys(password)
-    driver.find_element(By.CSS_SELECTOR, "button[type=submit], input[type=submit]").click()
-    time.sleep(3)
+    u = driver.find_element(By.ID, "username")
+    p = driver.find_element(By.ID, "password")
+    _fill(driver, u, username, "utente")
+    _fill(driver, p, password, "password")
+    submit = driver.find_element(By.CSS_SELECTOR, "button[type=submit], input[type=submit]")
+    # click via JavaScript: non fallisce se un banner (es. cookie) copre il pulsante
+    driver.execute_script("arguments[0].click();", submit)
+
+    # Attende che il sito lasci la pagina di login. Prima si guardava dopo 3
+    # secondi fissi: su Mac/connessioni lente la pagina non era ancora cambiata
+    # e il login veniva dato per «rifiutato» anche con la password giusta.
+    deadline = time.time() + int(os.environ.get("MCWS_LOGIN_WAIT", "40"))
+    msg = ""
+    while time.time() < deadline:
+        time.sleep(2)
+        try:
+            title = driver.title
+        except WebDriverException:
+            continue
+        if "Just a moment" in title or "Ci siamo quasi" in title:
+            continue
+        if not _on_login_page(driver):
+            break
+        if _stale(u):               # pagina ricaricata ma ancora login: c'e' un motivo?
+            msg = _site_error(driver)
+            if msg:
+                break
     print(f"Post-login URL: {driver.current_url}")
 
-    if "/login" in driver.current_url or "/signin" in driver.current_url:
-        # Prova a leggere il messaggio d'errore mostrato dal sito, per sapere il motivo.
+    if _on_login_page(driver):
+        if msg:
+            raise SystemExit(
+                "ERRORE: login rifiutato da MCWS (username/password non accettati)."
+                f"\n  Messaggio dal sito: {msg!r}"
+                "\n  Controlla in credenziali.env: (1) nessuno spazio prima/dopo il valore; "
+                "(2) usa le virgolette SINGOLE se la password ha $ ` \\ o \"; "
+                "(3) niente virgolette 'intelligenti' da copia-incolla; (4) valori esatti.")
+        # Nessun messaggio dal sito: non e' detto che la password sia sbagliata.
+        raise LoginUnclear("MCWS e' rimasto sulla pagina di login senza messaggi")
+
+
+def _on_login_page(driver: uc.Chrome) -> bool:
+    try:
+        url = driver.current_url
+    except WebDriverException:
+        return True
+    return "/login" in url or "/signin" in url
+
+
+def _stale(el) -> bool:
+    """True se la pagina che conteneva el e' stata ricaricata."""
+    try:
+        el.is_enabled()
+        return False
+    except StaleElementReferenceException:
+        return True
+    except WebDriverException:
+        return False
+
+
+def _site_error(driver: uc.Chrome) -> str:
+    """Messaggio d'errore mostrato dal sito sotto il form (se c'e')."""
+    try:
+        return driver.execute_script(
+            "var el=document.querySelector("
+            "'.alert-danger,.invalid-feedback,[role=alert],.error,.help-block,.alert');"
+            "return el?el.innerText.trim().slice(0,200):''") or ""
+    except Exception:
+        return ""
+
+
+def _fill(driver: uc.Chrome, field, value: str, label: str) -> None:
+    """Scrive value nel campo e controlla che ci sia rimasto (su Mac lenti la
+    pagina a volte non e' pronta o il JavaScript svuota il campo). Se serve
+    riscrive, e come ultima risorsa lo imposta via JavaScript."""
+    def current() -> str:
         try:
-            msg = driver.execute_script(
-                "var el=document.querySelector("
-                "'.alert,.alert-danger,.error,.invalid-feedback,.help-block,[role=alert]');"
-                "return el?el.innerText.trim().slice(0,200):''") or ""
+            return driver.execute_script("return arguments[0].value", field) or ""
         except Exception:
-            msg = ""
-        hint = f"\n  Messaggio dal sito: {msg!r}" if msg else ""
-        raise SystemExit(
-            "ERRORE: login rifiutato da MCWS (username/password non accettati)." + hint +
-            "\n  Controlla in credenziali.env: (1) nessuno spazio prima/dopo il valore; "
-            "(2) usa le virgolette SINGOLE se la password ha $ ` \\ o \"; "
-            "(3) niente virgolette 'intelligenti' da copia-incolla; (4) valori esatti.")
+            return ""
+
+    for _ in range(2):
+        field.clear()
+        field.send_keys(value)
+        if current() == value:
+            return
+        print(f"  Campo {label} non riempito bene ({len(current())}/{len(value)}) — riscrivo")
+        time.sleep(1)
+    driver.execute_script(
+        "arguments[0].value=arguments[1];"
+        "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+        "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", field, value)
 
 
 def download_once(username: str, password: str, out_file: Path) -> None:
@@ -227,7 +292,13 @@ def main():
             download_once(username, password, out_file)
             break
         except (NoSuchWindowException, InvalidSessionIdException, CFTimeout) as e:
-            motivo = "Cloudflare non superato" if isinstance(e, CFTimeout) else "finestra Chrome instabile"
+            if isinstance(e, LoginUnclear):
+                motivo = ("accesso a MCWS non completato: dopo l'invio il sito resta "
+                          "sulla pagina di login senza spiegare perche'")
+            elif isinstance(e, CFTimeout):
+                motivo = "Cloudflare non superato"
+            else:
+                motivo = "finestra Chrome instabile"
             print(f"  [retry] {motivo} — tentativo {attempt}/{MAX_ATTEMPTS}, riprovo con sessione nuova")
             time.sleep(3)
             if attempt == MAX_ATTEMPTS:
