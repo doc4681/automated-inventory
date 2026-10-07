@@ -47,16 +47,35 @@ def _read_env_text() -> str:
     return f.read_text(encoding="utf-8") if f.exists() else ""
 
 
-def _env_value(key: str) -> str | None:
-    """Legge un export KEY="..." (anche senza «export») dal file credenziali attivo,
-    senza eseguirlo."""
+def _env_value(key: str, text: str | None = None) -> str | None:
+    """Legge un export KEY="..." (anche senza «export») dal file credenziali attivo
+    (o dal testo dato), senza eseguirlo."""
     m = re.search(rf"""^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(?:'([^'\n]*)'|"([^"\n]*)"|([^\s#]*))""",
-                  _read_env_text(), re.M)
+                  _read_env_text() if text is None else text, re.M)
     return next((g for g in m.groups() if g is not None), "").strip() if m else None
 
 
 # Valori finti dei file di esempio: se sono ancora lì, la password non è stata inserita.
 PLACEHOLDERS = {"tua-email@esempio.com"}
+
+
+# Altri file con le password MCWS (es. la newsletter installata a parte dal
+# Terminale): il login li prova se quelle del pannello non bastano
+# (Vroomi-Newsletter/session.py, login_any).
+OTHER_ENVS = (REPO / "Vroomi-Newsletter" / "credenziali.env",
+              Path.home() / "Vroomi-Newsletter" / "credenziali.env", HOME_ENV)
+
+
+def _mcws_elsewhere() -> bool:
+    for f in OTHER_ENVS:
+        try:
+            text = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        vals = [(_env_value(k, text) or "").strip() for k in ("MCWS_USERNAME", "MCWS_PASSWORD")]
+        if all(v and v not in PLACEHOLDERS for v in vals):
+            return True
+    return False
 
 
 def credentials_status() -> dict:
@@ -66,7 +85,7 @@ def credentials_status() -> dict:
         v = (_env_value(key) or "").strip()
         return bool(v) and v not in PLACEHOLDERS
 
-    mcws = filled("MCWS_USERNAME") and filled("MCWS_PASSWORD")
+    mcws = (filled("MCWS_USERNAME") and filled("MCWS_PASSWORD")) or _mcws_elsewhere()
     shopify = filled("SHOPIFY_ADMIN_TOKEN") or (
         filled("SHOPIFY_CLIENT_ID") and filled("SHOPIFY_CLIENT_SECRET"))
     return {

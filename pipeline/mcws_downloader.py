@@ -2,9 +2,9 @@
 mcws_downloader.py
 Login su modelcarswholesale.com con undetected-chromedriver (bypassa Cloudflare),
 poi scarica il CSV inventario riutilizzando i cookies di sessione.
-Credenziali SOLO da variabili d'ambiente:
-  os.environ['MCWS_USERNAME']
-  os.environ['MCWS_PASSWORD']
+Credenziali: MCWS_USERNAME / MCWS_PASSWORD dall'ambiente (pannello o run.sh); se il
+sito non fa entrare prova anche gli altri credenziali.env del Mac, come la newsletter
+(Vroomi-Newsletter/session.py, login_any).
 
 Uso:
   python pipeline/mcws_downloader.py
@@ -87,20 +87,20 @@ def make_driver() -> uc.Chrome:
         raise CFTimeout(str(e)) from e
 
 
-def login(driver: uc.Chrome, username: str, password: str) -> None:
+def login(driver: uc.Chrome) -> None:
     """Login su MCWS con la STESSA procedura della newsletter
     (Vroomi-Newsletter/session.py): prima l'inventario ne aveva una copia sua,
     leggermente diversa, che sul Mac del collaboratore falliva mentre la
     newsletter entrava. Solleva CFTimeout/LoginUnclear (ritentabili) o
     SystemExit (credenziali vuote o rifiutate dal sito)."""
-    # Diagnostica SICURA (non stampa la password): se il login viene rifiutato
-    # serve capire se le credenziali sono arrivate vuote/corrotte dall'ambiente.
-    if not username or not password:
+    # Credenziali: quelle del pannello e, se il sito non fa entrare, anche quelle
+    # degli altri credenziali.env del Mac (es. la newsletter installata a parte).
+    if not mcws_session.credential_candidates():
         raise SystemExit(
             "ERRORE: MCWS_USERNAME o MCWS_PASSWORD VUOTI — controlla credenziali.env "
             "(campi tra virgolette, senza spazi).")
     try:
-        mcws_session.login(driver, username, password)
+        mcws_session.login_any(driver)
     except mcws_session.LoginUnclear as e:
         raise LoginUnclear(str(e)) from e
     except mcws_session.CFTimeout as e:
@@ -112,13 +112,13 @@ def login(driver: uc.Chrome, username: str, password: str) -> None:
             "con cui entri a mano su modelcarswholesale.com).") from e
 
 
-def download_once(username: str, password: str, out_file: Path) -> None:
+def download_once(out_file: Path) -> None:
     """Un tentativo completo: login → download → logout. Solleva le eccezioni
     di sessione/finestra (NoSuchWindowException/InvalidSessionIdException) così
     main() può ritentare con una sessione Chrome nuova."""
     driver = make_driver()
     try:
-        login(driver, username, password)
+        login(driver)
 
         # Download CSV direttamente con Chrome (bypassa CF)
         print(f"Download da {DOWNLOAD_URL}...")
@@ -156,16 +156,12 @@ def download_once(username: str, password: str, out_file: Path) -> None:
 
 
 def main():
-    # .strip(): toglie spazi/newline accidentali (copia-incolla) che farebbero
-    # fallire il login pur avendo "la password giusta".
-    username = os.environ.get("MCWS_USERNAME", "").strip()
-    password = os.environ.get("MCWS_PASSWORD", "").strip()
     out_file = output_file(MCWS_DIR, "mcws_inventory")
 
     MAX_ATTEMPTS = 3
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            download_once(username, password, out_file)
+            download_once(out_file)
             break
         except (NoSuchWindowException, InvalidSessionIdException, CFTimeout) as e:
             if isinstance(e, LoginUnclear):

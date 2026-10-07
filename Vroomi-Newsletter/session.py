@@ -6,11 +6,12 @@ pipeline `automated-inventory`, che si e' rivelato piu' affidabile del Selenium
 classico).
 
 Credenziali MCWS_USERNAME / MCWS_PASSWORD: dall'ambiente (il pannello le passa),
-altrimenti da credenziali.env o ~/.env.vroomi.
+altrimenti da credenziali.env o ~/.env.vroomi; se il sito non fa entrare,
+login_any() prova anche le altre salvate sul Mac (vedi credential_candidates).
 
 API:
     drv = make_driver(headless=False)
-    login(drv)                       # RuntimeError se rifiutato, CFTimeout se ritentabile
+    login_any(drv)                   # come login(), provando tutte le credenziali salvate
     soup = get_soup(drv, url)        # BeautifulSoup della pagina (attende Cloudflare)
 """
 
@@ -80,6 +81,98 @@ def get_credentials() -> tuple[str, str]:
         )
     print(f"  [login] credenziali MCWS da: {source or '?'}", flush=True)
     return user, pwd
+
+
+def _read_env_values(path: Path) -> dict:
+    """Valori di un file credenziali, senza toccare l'ambiente."""
+    if not path.is_file():
+        return {}
+    out = {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        m = re.match(r"""\s*(?:export\s+)?([A-Z_]+)\s*=\s*(["']?)(.*?)\2\s*$""", line)
+        if m and m.group(3).strip() and m.group(3).strip() not in PLACEHOLDERS:
+            out.setdefault(m.group(1), m.group(3).strip())
+    return out
+
+
+def credential_candidates() -> list[tuple[str, str, str]]:
+    """Tutte le coppie utente/password MCWS DIVERSE salvate su questo Mac, in
+    ordine: quelle passate dal pannello (Impostazioni), poi i file credenziali.env.
+    Tra questi c'e' anche ~/Vroomi-Newsletter/credenziali.env, la newsletter
+    installata dal Terminale: sul Mac del collaboratore la newsletter entrava con
+    quelle, mentre l'inventario usava quelle del pannello, che erano diverse."""
+    here = Path(__file__).resolve().parent
+    found = [(os.environ.get("MCWS_USERNAME", "").strip(),
+              os.environ.get("MCWS_PASSWORD", "").strip(), "Impostazioni del pannello")]
+    seen_files = set()
+    for f in (here / "credenziali.env",
+              here.parent / "credenziali.env",
+              Path.home() / "Vroomi-Newsletter" / "credenziali.env",
+              Path.home() / ".env.vroomi"):
+        try:
+            key = f.resolve()
+        except OSError:
+            continue
+        if key in seen_files:
+            continue
+        seen_files.add(key)
+        vals = _read_env_values(f)
+        found.append((vals.get("MCWS_USERNAME", ""), vals.get("MCWS_PASSWORD", ""), str(f)))
+    out, seen = [], set()
+    for user, pwd, src in found:
+        if user and pwd and (user, pwd) not in seen:
+            seen.add((user, pwd))
+            out.append((user, pwd, src))
+    return out
+
+
+def _remember(user: str, pwd: str) -> None:
+    """Salva nel pannello (Impostazioni) le credenziali che hanno funzionato, cosi'
+    dalla prossima volta si parte da quelle. Solo dentro automated-inventory."""
+    root = Path(__file__).resolve().parent.parent
+    if not (root / "pannello" / "controller.py").is_file():
+        return
+    try:
+        import sys
+        if str(root) not in sys.path:
+            sys.path.append(str(root))
+        from pannello.controller import save_credentials
+        save_credentials({"MCWS_USERNAME": user, "MCWS_PASSWORD": pwd})
+        print("  [login] le ho salvate nelle Impostazioni del pannello.", flush=True)
+    except Exception as e:
+        print(f"  [login] non sono riuscito a salvarle nelle Impostazioni: {e}", flush=True)
+
+
+def login_any(driver: uc.Chrome) -> None:
+    """Login provando, se il sito non fa entrare, anche le ALTRE credenziali
+    salvate su questo Mac (vedi credential_candidates). Se entra con credenziali
+    diverse da quelle del pannello, le salva nel pannello."""
+    cands = credential_candidates()
+    if not cands:
+        raise RuntimeError(
+            "MCWS_USERNAME / MCWS_PASSWORD vuoti o mancanti. Inseriscili nelle "
+            "Impostazioni del pannello (o in credenziali.env).")
+    errors = []
+    for i, (user, pwd, src) in enumerate(cands):
+        print(f"  [login] credenziali MCWS da: {src}", flush=True)
+        try:
+            login(driver, user, pwd)
+        except (RuntimeError, LoginUnclear) as e:
+            errors.append(e)
+            if i + 1 < len(cands):
+                print(f"  [login] non entra con queste: provo quelle di {cands[i + 1][2]}",
+                      flush=True)
+                continue
+            # Tutte respinte: se il sito ha detto esplicitamente «no» almeno una
+            # volta e' un rifiuto, altrimenti si riprova con una sessione nuova.
+            tried = ", ".join(c[2] for c in cands)
+            final = next((x for x in errors if not isinstance(x, LoginUnclear)), e)
+            if len(cands) > 1:
+                raise type(final)(f"{final} (provate le credenziali di: {tried})") from e
+            raise
+        if i > 0:
+            _remember(user, pwd)
+        return
 
 
 # ── driver ───────────────────────────────────────────────────────────────────
@@ -385,7 +478,7 @@ class BrowserSession:
         for attempt in range(1, attempts + 1):
             try:
                 self.drv = make_driver(headless=self.headless)
-                login(self.drv)
+                login_any(self.drv)
                 return
             except self.RECOVERABLE as e:
                 self.quit()

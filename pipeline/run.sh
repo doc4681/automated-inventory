@@ -87,7 +87,10 @@ for k in MCWS_USERNAME MCWS_PASSWORD; do
   v=$("$PY" -c 'import sys; from pannello.controller import _env_value; print(_env_value(sys.argv[1]) or "", end="")' "$k" 2>/dev/null) || v=""
   [[ -n "$v" ]] && export "$k=$v"
 done
-if [[ -z "${MCWS_USERNAME:-}" || -z "${MCWS_PASSWORD:-}" ]]; then
+# Mancano qui ma ci sono in un altro credenziali.env (es. la newsletter installata
+# a parte): il downloader le prova da solo (Vroomi-Newsletter/session.py, login_any).
+if [[ -z "${MCWS_USERNAME:-}" || -z "${MCWS_PASSWORD:-}" ]] &&
+   ! "$PY" -c 'from pannello.controller import _mcws_elsewhere as f; raise SystemExit(0 if f() else 1)' 2>/dev/null; then
   echo "ERRORE: credenziali MCWS mancanti. Compila 'credenziali.env' nella cartella"
   echo "        (oppure ~/.env.vroomi) con MCWS_USERNAME e MCWS_PASSWORD."
   notify "Vroomi ⚠️ Inventario FALLITO" "Credenziali MCWS mancanti"
