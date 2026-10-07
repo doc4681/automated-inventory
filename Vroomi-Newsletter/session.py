@@ -16,6 +16,7 @@ API:
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import time
@@ -210,8 +211,11 @@ def login(driver: uc.Chrome, user: str | None = None, pwd: str | None = None) ->
     # Diagnostica SICURA (mai la password): serve a capire se le credenziali
     # arrivano giuste, vuote o con caratteri in piu'.
     mask = (user[:2] + "…" + user[-2:]) if len(user) > 4 else "(corta)"
+    # «impronta»: 4 caratteri ricavati dalla password, che non la rivelano ma
+    # permettono di vedere se newsletter e inventario usano la STESSA password.
+    impronta = hashlib.sha256(pwd.encode()).hexdigest()[:4]
     print(f"  [login] credenziali: utente='{mask}' (len {len(user)}), "
-          f"password len {len(pwd)}", flush=True)
+          f"password len {len(pwd)}, impronta {impronta}", flush=True)
 
     print("  [login] apertura pagina di login...", flush=True)
     driver.get(LOGIN_URL)

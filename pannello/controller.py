@@ -303,6 +303,17 @@ def tail_log(path: Path | None, n: int = 200) -> str:
     return "\n".join(lines[-n:])
 
 
+def mcws_diagnosis(path: Path | None) -> tuple[list[str], Path | None]:
+    """Righe del log utili a capire un login MCWS fallito (credenziali mascherate,
+    pagina, form, messaggi del sito) e l'ultima foto della pagina salvata."""
+    text = Path(path).read_text(encoding="utf-8", errors="replace") if path and Path(path).exists() else ""
+    keys = ("[login]", "[diagnosi", "Post-login URL", "Credenziali caricate", "[retry]")
+    lines = [l.strip() for l in text.splitlines() if any(k in l for k in keys)]
+    shots = re.findall(r"foto della pagina: (.+\.png)", text)
+    shot = Path(shots[-1].strip()) if shots else None
+    return lines[-40:], (shot if shot and shot.exists() else None)
+
+
 def newsletter_summary(path: Path | None) -> dict:
     """Riassunto leggibile di una run newsletter, ricavato dal suo log."""
     text = Path(path).read_text(encoding="utf-8", errors="replace") if path and Path(path).exists() else ""

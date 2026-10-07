@@ -28,8 +28,12 @@ def _load_env(path: Path) -> None:
     for line in path.read_text(encoding="utf-8").splitlines():
         # accetta valori tra virgolette doppie, singole o senza virgolette
         m = re.match(r"""\s*(?:export\s+)?([A-Z_]+)\s*=\s*(["']?)(.*?)\2\s*$""", line)
-        if m:
-            os.environ.setdefault(m.group(1), m.group(3))
+        # Valori vuoti o di esempio non contano e non devono coprire quelli veri
+        # di un file letto dopo (es. MCWS_PASSWORD='' in credenziali.env e la
+        # password vera in ~/.env.vroomi): come session._load_env_file.
+        if (m and m.group(3).strip() and m.group(3).strip() != "tua-email@esempio.com"
+                and not os.environ.get(m.group(1), "").strip()):
+            os.environ[m.group(1)] = m.group(3)
 
 
 def get_access_token(domain: str) -> str:

@@ -147,7 +147,7 @@ def _result(log: Path) -> None:
                 f"{when(_started(log))}")
 
     if s["errors"] and not s["report"]:
-        job_error(s["errors"], key="inva_err_settings")
+        job_error(s["errors"], key="inva_err_settings", log=log)
         with st.expander("🔎 Dettaglio tecnico (registro completo)"):
             st.code(ctl.tail_log(log, 400) or "—", language="text")
         return

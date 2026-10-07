@@ -90,7 +90,7 @@ def _result(log: Path) -> None:
             st.caption("«manca markup» = il marchio non ha un ricarico: aggiungilo nel file dei "
                        "ricarichi (Impostazioni). «non in Valid_Trademarks» = non è tra i marchi che vendi.")
     elif s["errors"] and not (s["created"] or s["existing"] or s["to_create"]):
-        job_error(s["errors"], key="nl_err_settings")
+        job_error(s["errors"], key="nl_err_settings", log=log)
     elif apply:
         st.success(f"✅ **{num(s['created'])} bozze create** su Shopify. "
                    f"{num(s['existing'])} prodotti erano già nel negozio e sono stati saltati.")
