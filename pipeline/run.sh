@@ -75,16 +75,24 @@ echo "════════════════════════�
 [[ -f "$HOME/.env.vroomi" ]] && source "$HOME/.env.vroomi"
 # shellcheck disable=SC1091
 [[ -f "$REPO/credenziali.env" ]] && source "$REPO/credenziali.env"
+
+# ── Python: virtualenv del progetto se presente ──────────────────────────────
+if [[ -x "$REPO/.venv/bin/python" ]]; then PY="$REPO/.venv/bin/python"; else PY="$(command -v python3)"; fi
+echo "Python: $PY"
+
+# Utente e password MCWS riletti "alla lettera", come fanno il pannello, la
+# newsletter e l'inventario: `source` altera le password che contengono
+# $ ` \ o ! se nel file sono tra virgolette doppie (MCWS poi le rifiuta).
+for k in MCWS_USERNAME MCWS_PASSWORD; do
+  v=$("$PY" -c 'import sys; from pannello.controller import _env_value; print(_env_value(sys.argv[1]) or "", end="")' "$k" 2>/dev/null) || v=""
+  [[ -n "$v" ]] && export "$k=$v"
+done
 if [[ -z "${MCWS_USERNAME:-}" || -z "${MCWS_PASSWORD:-}" ]]; then
   echo "ERRORE: credenziali MCWS mancanti. Compila 'credenziali.env' nella cartella"
   echo "        (oppure ~/.env.vroomi) con MCWS_USERNAME e MCWS_PASSWORD."
   notify "Vroomi ⚠️ Inventario FALLITO" "Credenziali MCWS mancanti"
   exit 1
 fi
-
-# ── Python: virtualenv del progetto se presente ──────────────────────────────
-if [[ -x "$REPO/.venv/bin/python" ]]; then PY="$REPO/.venv/bin/python"; else PY="$(command -v python3)"; fi
-echo "Python: $PY"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 rows() { [[ -f "$1" ]] && { local n; n=$(tail -n +2 "$1" 2>/dev/null | wc -l | tr -d ' '); echo "${n:-0}"; } || echo 0; }
