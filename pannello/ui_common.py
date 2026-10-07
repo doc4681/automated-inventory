@@ -110,6 +110,20 @@ def job_error(errors: list, key: str) -> None:
     password (MCWS rifiuta il login, Shopify rifiuta la chiave) porta alle Impostazioni."""
     text = "\n\n".join(errors[:3])
     low = text.lower()
+    if "accesso a mcws non completato" in low:
+        # Il sito non ha detto «password sbagliata»: di solito è lentezza di
+        # Cloudflare/rete, non le password. Si riprova; se si ripete, si controllano.
+        st.warning("⏳ **Non sono riuscito a entrare su modelcarswholesale.com (MCWS).** "
+                   "Il sito non ha detto che la password è sbagliata: di solito è "
+                   "lentezza del sito o della connessione.")
+        st.markdown("Riprova tra qualche minuto, senza toccare il computer mentre si apre "
+                    "Chrome. Se succede ancora, controlla nome utente e password in "
+                    "**⚙️ Impostazioni** (prova anche a entrare a mano sul sito con gli "
+                    "stessi dati).")
+        st.button("🔑 Controlla le password MCWS", key=key, on_click=go, args=("impostazioni",))
+        with st.expander("Messaggio originale"):
+            st.text(text)
+        return
     if any(w in low for w in ("login rifiutato", "login non riuscito", "vuoti")):
         st.error("🔑 **modelcarswholesale.com (MCWS) non ha accettato nome utente o password** "
                  "salvati su questo Mac.")

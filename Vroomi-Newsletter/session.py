@@ -5,11 +5,12 @@ Usa undetected-chromedriver per superare Cloudflare (stesso approccio della
 pipeline `automated-inventory`, che si e' rivelato piu' affidabile del Selenium
 classico).
 
-Credenziali lette da ~/.env.vroomi (MCWS_USERNAME / MCWS_PASSWORD).
+Credenziali MCWS_USERNAME / MCWS_PASSWORD: dall'ambiente (il pannello le passa),
+altrimenti da credenziali.env o ~/.env.vroomi.
 
 API:
     drv = make_driver(headless=False)
-    login(drv)                       # solleva RuntimeError se fallisce
+    login(drv)                       # RuntimeError se rifiutato, CFTimeout se ritentabile
     soup = get_soup(drv, url)        # BeautifulSoup della pagina (attende Cloudflare)
 """
 
@@ -25,11 +26,9 @@ from bs4 import BeautifulSoup
 
 from chrome import new_chrome
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
-    TimeoutException, NoSuchElementException, WebDriverException,
-    InvalidSessionIdException, NoSuchWindowException,
+    WebDriverException, InvalidSessionIdException, NoSuchWindowException,
+    StaleElementReferenceException,
 )
 
 BASE_URL = "https://www.modelcarswholesale.com"
@@ -40,28 +39,45 @@ class CFTimeout(Exception):
 
 
 # ── credenziali ──────────────────────────────────────────────────────────────
-def _load_env_file(path: Path) -> None:
-    """Carica un file `export KEY="value"` nell'ambiente (se non gia' presente)."""
+PLACEHOLDERS = {"tua-email@esempio.com"}   # valori finti dei file di esempio
+
+
+def _load_env_file(path: Path) -> list[str]:
+    """Carica un file `export KEY="value"` nell'ambiente (se non gia' impostato).
+    Ritorna le chiavi impostate davvero da questo file."""
     if not path.exists():
-        return
+        return []
+    loaded = []
     for line in path.read_text(encoding="utf-8").splitlines():
         # accetta valori tra virgolette doppie, singole o senza virgolette
         m = re.match(r"""\s*(?:export\s+)?([A-Z_]+)\s*=\s*(["']?)(.*?)\2\s*$""", line)
-        if m:
-            os.environ.setdefault(m.group(1), m.group(3))
+        # valori vuoti o di esempio non contano: non devono coprire quelli veri
+        # di un file successivo
+        if (m and m.group(3).strip() and m.group(3).strip() not in PLACEHOLDERS
+                and not os.environ.get(m.group(1), "").strip()):
+            os.environ[m.group(1)] = m.group(3)
+            loaded.append(m.group(1))
+    return loaded
 
 
 def get_credentials() -> tuple[str, str]:
     here = Path(__file__).parent
-    _load_env_file(here / "credenziali.env")          # cartella da sola (zip per Giuliano)
-    _load_env_file(here.parent / "credenziali.env")   # dentro automated-inventory
-    _load_env_file(Path.home() / ".env.vroomi")
+    # Dal pannello arrivano gia' nell'ambiente (quelle salvate in Impostazioni):
+    # hanno la precedenza sui file qui sotto.
+    source = "pannello / ambiente" if os.environ.get("MCWS_PASSWORD") else ""
+    for f in (here / "credenziali.env",               # cartella da sola (zip per Giuliano)
+              here.parent / "credenziali.env",        # dentro automated-inventory
+              Path.home() / ".env.vroomi"):
+        if "MCWS_PASSWORD" in _load_env_file(f):
+            source = str(f)
     user = os.environ.get("MCWS_USERNAME", "").strip()
     pwd = os.environ.get("MCWS_PASSWORD", "").strip()
     if not user or not pwd:
         raise RuntimeError(
-            "MCWS_USERNAME / MCWS_PASSWORD mancanti. Impostali in ~/.env.vroomi"
+            "MCWS_USERNAME / MCWS_PASSWORD vuoti o mancanti. Inseriscili nelle "
+            "Impostazioni del pannello (o in credenziali.env)."
         )
+    print(f"  [login] credenziali MCWS da: {source or '?'}", flush=True)
     return user, pwd
 
 
@@ -111,50 +127,103 @@ def get_soup(driver: uc.Chrome, url: str) -> BeautifulSoup | None:
 
 
 # ── login ────────────────────────────────────────────────────────────────────
+# Stessa procedura collaudata di pipeline/mcws_downloader.py (che funziona anche
+# sul Mac del collaboratore): pagina di login diretta, campi #username/#password,
+# controllo che i campi siano stati riempiti davvero, attesa del cambio pagina.
+LOGIN_URL = f"{BASE_URL}/it/login"
+USER_SELECTORS = ["#username", "input[name='_username']", "input[name='username']",
+                  "input[type='email']", "input[name*='mail']", "#email"]
+PASS_SELECTORS = ["#password", "input[name='_password']", "input[type='password']",
+                  "input[name*='pass']"]
+
+
+class LoginUnclear(CFTimeout):
+    """Dopo l'invio il sito e' rimasto sulla pagina di login senza dire perche'
+    (pagina lenta, campi svuotati dal JavaScript...): si riprova con una
+    sessione Chrome nuova, prima di concludere che la password e' sbagliata."""
+
+
 def is_logged_in(driver: uc.Chrome) -> bool:
     """Euristica: da loggati compare un link di logout / area cliente."""
     html = driver.page_source.lower()
-    return any(k in html for k in ("logout", "esci", "my account", "il mio account", "mio conto"))
+    return any(k in html for k in ("/logout", "my account", "il mio account", "mio conto"))
+
+
+def _on_login_page(driver: uc.Chrome) -> bool:
+    try:
+        url = driver.current_url
+    except WebDriverException:
+        return True
+    return "/login" in url or "/signin" in url
+
+
+def _stale(el) -> bool:
+    """True se la pagina che conteneva el e' stata ricaricata."""
+    try:
+        el.is_enabled()
+        return False
+    except StaleElementReferenceException:
+        return True
+    except WebDriverException:
+        return False
+
+
+def _site_error(driver: uc.Chrome) -> str:
+    """Messaggio d'errore mostrato dal sito sotto il form (se c'e')."""
+    try:
+        return driver.execute_script(
+            "var el=document.querySelector("
+            "'.alert-danger,.invalid-feedback,[role=alert],.error,.help-block,.alert');"
+            "return el?el.innerText.trim().slice(0,200):''") or ""
+    except Exception:
+        return ""
+
+
+def _fill(driver: uc.Chrome, field, value: str) -> None:
+    """Scrive value nel campo e controlla che ci sia rimasto (su Mac lenti la
+    pagina a volte non e' pronta o il JavaScript svuota il campo). Se serve
+    riscrive, e come ultima risorsa lo imposta via JavaScript."""
+    def current() -> str:
+        try:
+            return driver.execute_script("return arguments[0].value", field) or ""
+        except Exception:
+            return ""
+
+    for _ in range(2):
+        field.clear()
+        field.send_keys(value)
+        if current() == value:
+            return
+        time.sleep(1)
+    driver.execute_script(
+        "arguments[0].value=arguments[1];"
+        "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));"
+        "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", field, value)
 
 
 def login(driver: uc.Chrome) -> None:
     user, pwd = get_credentials()
-    print("  [login] apertura sito...", flush=True)
-    driver.get(f"{BASE_URL}/it")
+    # Diagnostica SICURA (mai la password): serve a capire se le credenziali
+    # arrivano giuste, vuote o con caratteri in piu'.
+    mask = (user[:2] + "…" + user[-2:]) if len(user) > 4 else "(corta)"
+    print(f"  [login] credenziali: utente='{mask}' (len {len(user)}), "
+          f"password len {len(pwd)}", flush=True)
+
+    print("  [login] apertura pagina di login...", flush=True)
+    driver.get(LOGIN_URL)
     _wait_cloudflare(driver)
-    time.sleep(2)
 
-    if is_logged_in(driver):
-        print("  [login] gia' autenticato.", flush=True)
-        return
-
-    # Vai direttamente alla pagina di login (piu' robusto del click sul bottone)
-    for login_url in (f"{BASE_URL}/it/login", f"{BASE_URL}/login", f"{BASE_URL}/it/customer/account/login"):
-        driver.get(login_url)
-        _wait_cloudflare(driver)
-        time.sleep(1.5)
-        if driver.find_elements(By.CSS_SELECTOR, "input[type='email'], input[name*='mail'], input[name='username']"):
-            break
-
-    # Campo email/username
-    EMAIL_SELECTORS = [
-        "input[type='email']",
-        "input[name*='mail']",
-        "input[name='username']",
-        "input[name='login']",
-        "#email",
-    ]
-    email_field = _first_element(driver, EMAIL_SELECTORS)
-    if not email_field:
+    form_wait = int(os.environ.get("MCW_FORM_WAIT", "30"))
+    user_field = _first_element(driver, USER_SELECTORS, timeout=form_wait)
+    if not user_field:
         # A volte, dopo il challenge, Cloudflare reindirizza alla home (senza form):
         # ri-navigo esplicitamente al login (ora col lasciapassare CF gia' ottenuto).
         print(f"  [login] form non trovato (url={driver.current_url}, "
               f"titolo={driver.title!r}) — ri-navigo", flush=True)
-        driver.get(f"{BASE_URL}/it/login")
+        driver.get(LOGIN_URL)
         _wait_cloudflare(driver)
-        time.sleep(2)
-        email_field = _first_element(driver, EMAIL_SELECTORS)
-    if not email_field:
+        user_field = _first_element(driver, USER_SELECTORS, timeout=form_wait)
+    if not user_field:
         try:
             campi = driver.execute_script(
                 "return Array.from(document.querySelectorAll('input'))"
@@ -164,52 +233,65 @@ def login(driver: uc.Chrome) -> None:
         print(f"  [login] campi input nella pagina: {campi}", flush=True)
         # Ritentabile: la sessione verra' riaperta da BrowserSession.
         raise CFTimeout("form di login MCWS non caricato")
-    email_field.clear()
-    email_field.send_keys(user)
+    time.sleep(1)  # lascia finire il JavaScript della pagina prima di scrivere
 
-    # Campo password
-    pwd_field = _first_element(driver, [
-        "input[type='password']",
-        "input[name*='pass']",
-        "#password",
-    ])
+    pwd_field = _first_element(driver, PASS_SELECTORS, timeout=5)
     if not pwd_field:
-        raise RuntimeError("Campo password non trovato nella pagina di login.")
-    pwd_field.clear()
-    pwd_field.send_keys(pwd)
+        raise CFTimeout("campo password non trovato nella pagina di login")
+    _fill(driver, user_field, user)
+    _fill(driver, pwd_field, pwd)
 
-    # Submit
-    submit = _first_element(driver, [
-        "button[type='submit']",
-        "input[type='submit']",
-        "button.login",
-        "button[name='login']",
-    ])
+    submit = _first_element(driver, ["button[type='submit']", "input[type='submit']",
+                                     "button.login", "button[name='login']"], timeout=3)
     if submit:
         driver.execute_script("arguments[0].click();", submit)
     else:
         pwd_field.submit()
 
-    _wait_cloudflare(driver)
-    time.sleep(3)
+    # Attende che il sito lasci la pagina di login (su Mac/connessioni lente
+    # puo' metterci parecchio: prima si controllava dopo 5 secondi fissi).
+    deadline = time.time() + int(os.environ.get("MCW_LOGIN_WAIT", "40"))
+    msg = ""
+    while time.time() < deadline:
+        time.sleep(2)
+        try:
+            title = driver.title
+        except WebDriverException:
+            continue
+        if "Just a moment" in title or "Ci siamo quasi" in title:
+            continue
+        if not _on_login_page(driver):
+            break
+        if _stale(user_field):      # pagina ricaricata ma ancora login: c'e' un motivo?
+            msg = _site_error(driver)
+            if msg:
+                break
+    print(f"  [login] dopo l'invio: {driver.current_url}", flush=True)
 
-    if not is_logged_in(driver):
-        raise RuntimeError(
-            "Login non riuscito: nessun indicatore di sessione trovato dopo il submit. "
-            "Verifica credenziali o selettori."
-        )
+    if _on_login_page(driver):
+        if msg:
+            raise RuntimeError(
+                f"login rifiutato da MCWS (username/password non accettati). "
+                f"Messaggio dal sito: {msg!r}")
+        raise LoginUnclear("MCWS e' rimasto sulla pagina di login senza messaggi")
     print("  [login] autenticazione riuscita.", flush=True)
 
 
 def _first_element(driver: uc.Chrome, selectors: list[str], timeout: int = 8):
-    for sel in selectors:
-        try:
-            return WebDriverWait(driver, timeout).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, sel))
-            )
-        except (TimeoutException, NoSuchElementException):
-            continue
-    return None
+    """Primo elemento VISIBILE tra i selettori, aspettando fino a timeout secondi
+    in tutto (non per ciascun selettore)."""
+    deadline = time.time() + timeout
+    while True:
+        for sel in selectors:
+            try:
+                for el in driver.find_elements(By.CSS_SELECTOR, sel):
+                    if el.is_displayed():
+                        return el
+            except WebDriverException:
+                pass
+        if time.time() >= deadline:
+            return None
+        time.sleep(0.5)
 
 
 # ── sessione con auto-recupero ───────────────────────────────────────────────
@@ -226,9 +308,31 @@ class BrowserSession:
         self.drv: uc.Chrome | None = None
         self._open()
 
-    def _open(self) -> None:
-        self.drv = make_driver(headless=self.headless)
-        login(self.drv)
+    def _open(self, attempts: int = 3) -> None:
+        """Chrome nuovo + login, con fino a `attempts` tentativi (come la pipeline
+        inventario): Cloudflare lento o un login rimasto a meta' si risolvono
+        quasi sempre con una sessione nuova. Un rifiuto esplicito del sito NO:
+        si ferma subito, per non insistere con una password sbagliata."""
+        for attempt in range(1, attempts + 1):
+            try:
+                self.drv = make_driver(headless=self.headless)
+                login(self.drv)
+                return
+            except self.RECOVERABLE as e:
+                self.quit()
+                if attempt >= attempts:
+                    if isinstance(e, LoginUnclear):
+                        raise RuntimeError(
+                            f"accesso a MCWS non completato dopo {attempts} tentativi: "
+                            "dopo l'invio il sito resta sulla pagina di login senza "
+                            "spiegare perche'.") from e
+                    raise
+                print(f"  [login] {e} — riprovo con una sessione nuova "
+                      f"({attempt}/{attempts - 1})", flush=True)
+                time.sleep(5 * attempt)
+            except Exception:
+                self.quit()
+                raise
 
     def _reopen(self) -> None:
         try:

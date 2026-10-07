@@ -48,8 +48,9 @@ def _read_env_text() -> str:
 
 
 def _env_value(key: str) -> str | None:
-    """Legge un export KEY="..." dal file credenziali attivo (senza eseguirlo)."""
-    m = re.search(rf"""^\s*export\s+{re.escape(key)}=(?:'([^'\n]*)'|"([^"\n]*)"|([^\s#]*))""",
+    """Legge un export KEY="..." (anche senza «export») dal file credenziali attivo,
+    senza eseguirlo."""
+    m = re.search(rf"""^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(?:'([^'\n]*)'|"([^"\n]*)"|([^\s#]*))""",
                   _read_env_text(), re.M)
     return next((g for g in m.groups() if g is not None), "").strip() if m else None
 
@@ -109,7 +110,7 @@ def save_credentials(values: dict) -> None:
         if not v:
             continue
         line = f"export {k}='{v}'"
-        pattern = rf'^\s*export\s+{re.escape(k)}=.*$'
+        pattern = rf'^\s*(?:export\s+)?{re.escape(k)}\s*=.*$'
         if re.search(pattern, txt, re.M):
             txt = re.sub(pattern, lambda _m: line, txt, count=1, flags=re.M)
         else:
