@@ -104,7 +104,9 @@ def _bbr_block(running: bool) -> bool:
         st.session_state["inva_bbr_saved"] = up.file_id
     last = ctl.latest_bbr()
     if not last:
-        st.caption("Carica le giacenze BBR una volta: le prossime volte le ritrovi qui.")
+        st.warning("**Manca il file delle giacenze BBR Models**: caricalo qui sopra (basta una "
+                   "volta, le prossime volte lo ritrovi qui). Se per ora non ti serve, spegni "
+                   "l'interruttore «Considera anche le giacenze BBR Models».")
         return False
     age = (datetime.now() - last["mtime"]).days
     msg = f"Uso le giacenze BBR caricate {when(last['mtime'])}."
@@ -145,6 +147,11 @@ def _result(log: Path) -> None:
     applied = info.get("apply", False)
     st.markdown(f"**Ultimo lavoro:** {'applicazione su Shopify' if applied else 'controllo'} — "
                 f"{when(_started(log))}")
+    started = _started(log)
+    if started and started.date() < datetime.now().date():
+        # Un risultato vecchio sembra un errore di adesso: lo diciamo chiaramente.
+        st.info(f"ℹ️ Questo è il risultato dell'ultimo lavoro fatto ({when(started)}), "
+                "non di oggi. Per vedere com'è la situazione adesso premi **Controlla** qui sopra.")
 
     if s["errors"] and not s["report"]:
         job_error(s["errors"], key="inva_err_settings", log=log)
@@ -262,7 +269,8 @@ def render_auto() -> None:
     st.button("🔍  Controlla  (non cambia niente su Shopify)", type="primary",
               on_click=_start_check, key="inva_check", disabled=running or not ready)
     if not ready:
-        st.caption("Per continuare completa i listini qui sopra.")
+        st.warning("⬆️ Il pulsante **Controlla** si attiva quando i listini qui sopra sono a "
+                   "posto: segui il messaggio giallo nel riquadro «Listini dei fornitori».")
     else:
         st.caption("Ti mostro cosa cambierebbe. Poi decidi tu se applicarlo.")
 
