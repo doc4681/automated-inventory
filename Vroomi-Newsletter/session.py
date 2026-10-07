@@ -201,8 +201,12 @@ def _fill(driver: uc.Chrome, field, value: str) -> None:
         "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", field, value)
 
 
-def login(driver: uc.Chrome) -> None:
-    user, pwd = get_credentials()
+def login(driver: uc.Chrome, user: str | None = None, pwd: str | None = None) -> None:
+    """Login su MCWS. Usata anche dall'inventario (pipeline/mcws_downloader.py),
+    cosi' newsletter e inventario entrano nel sito esattamente allo stesso modo.
+    RuntimeError se il sito rifiuta le credenziali, CFTimeout se ritentabile."""
+    if user is None or pwd is None:
+        user, pwd = get_credentials()
     # Diagnostica SICURA (mai la password): serve a capire se le credenziali
     # arrivano giuste, vuote o con caratteri in piu'.
     mask = (user[:2] + "…" + user[-2:]) if len(user) > 4 else "(corta)"
@@ -233,7 +237,8 @@ def login(driver: uc.Chrome) -> None:
         print(f"  [login] campi input nella pagina: {campi}", flush=True)
         # Ritentabile: la sessione verra' riaperta da BrowserSession.
         raise CFTimeout("form di login MCWS non caricato")
-    time.sleep(1)  # lascia finire il JavaScript della pagina prima di scrivere
+    _wait_page_ready(driver)   # su Mac lenti il JavaScript puo' rifare il form dopo
+    user_field = _first_element(driver, USER_SELECTORS, timeout=5) or user_field
 
     pwd_field = _first_element(driver, PASS_SELECTORS, timeout=5)
     if not pwd_field:
@@ -241,9 +246,15 @@ def login(driver: uc.Chrome) -> None:
     _fill(driver, user_field, user)
     _fill(driver, pwd_field, pwd)
 
-    submit = _first_element(driver, ["button[type='submit']", "input[type='submit']",
-                                     "button.login", "button[name='login']"], timeout=3)
-    if submit:
+    # Il pulsante «Accedi» dello STESSO form della password (non quello, per esempio,
+    # della ricerca o dell'iscrizione alla newsletter, che puo' venire prima nella pagina).
+    submit = driver.execute_script(
+        "var f=arguments[0].form; return f ? f.querySelector("
+        "'button[type=submit],input[type=submit],button:not([type])') : null;", pwd_field)
+    if submit is None:
+        submit = _first_element(driver, ["button[type='submit']", "input[type='submit']",
+                                         "button.login", "button[name='login']"], timeout=3)
+    if submit is not None:
         driver.execute_script("arguments[0].click();", submit)
     else:
         pwd_field.submit()
@@ -269,12 +280,66 @@ def login(driver: uc.Chrome) -> None:
     print(f"  [login] dopo l'invio: {driver.current_url}", flush=True)
 
     if _on_login_page(driver):
+        diagnose(driver, "login")
         if msg:
             raise RuntimeError(
                 f"login rifiutato da MCWS (username/password non accettati). "
                 f"Messaggio dal sito: {msg!r}")
         raise LoginUnclear("MCWS e' rimasto sulla pagina di login senza messaggi")
     print("  [login] autenticazione riuscita.", flush=True)
+
+
+def _wait_page_ready(driver: uc.Chrome, timeout: int = 15) -> None:
+    """Aspetta che la pagina abbia finito di caricarsi (piu' un secondo per il
+    JavaScript), prima di scrivere nei campi."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if driver.execute_script("return document.readyState") == "complete":
+                break
+        except WebDriverException:
+            pass
+        time.sleep(0.5)
+    time.sleep(1)
+
+
+# Dove salvare la foto della pagina quando il login non va (l'inventario la
+# cambia in logs/ del progetto).
+DIAG_DIR = Path(__file__).parent / "output"
+
+
+def diagnose(driver: uc.Chrome, what: str) -> None:
+    """Scrive nel log cosa c'e' sulla pagina (mai la password) e ne salva una
+    foto: serve a capire, a distanza, perche' il login non e' andato."""
+    try:
+        info = driver.execute_script("""
+            var t = function(e){return (e.innerText||e.value||'').trim().slice(0,40)};
+            return {
+              url: location.href, title: document.title,
+              forms: Array.from(document.forms).map(function(f){
+                return (f.getAttribute('action')||'?') + ' [' +
+                  Array.from(f.elements).map(function(e){
+                    return (e.name||e.id||e.type) + (e.type==='password' ? '' :
+                      (e.tagName==='BUTTON'||e.type==='submit' ? '=' + t(e) : ''))
+                  }).join(', ') + ']'}),
+              messaggi: Array.from(document.querySelectorAll(
+                '.alert,.error,.invalid-feedback,.help-block,[role=alert]'))
+                .map(t).filter(Boolean).slice(0,5)
+            };""")
+        print(f"  [diagnosi {what}] pagina: {info.get('url')} — {info.get('title')!r}", flush=True)
+        for f in info.get("forms") or []:
+            print(f"  [diagnosi {what}] form: {f}", flush=True)
+        if info.get("messaggi"):
+            print(f"  [diagnosi {what}] messaggi: {info['messaggi']}", flush=True)
+    except Exception as e:
+        print(f"  [diagnosi {what}] non riesco a leggere la pagina ({type(e).__name__})", flush=True)
+    try:
+        DIAG_DIR.mkdir(parents=True, exist_ok=True)
+        shot = DIAG_DIR / f"mcws_{what}_{time.strftime('%Y-%m-%d_%H%M%S')}.png"
+        driver.save_screenshot(str(shot))
+        print(f"  [diagnosi {what}] foto della pagina: {shot}", flush=True)
+    except Exception:
+        pass
 
 
 def _first_element(driver: uc.Chrome, selectors: list[str], timeout: int = 8):
