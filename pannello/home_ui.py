@@ -6,6 +6,7 @@ Due scelte principali (inventario, newsletter) e, sotto, catalogo automatico e i
 import streamlit as st
 
 from pannello import controller as ctl
+from pannello.aggiornamenti_ui import home_card
 from pannello.ui_common import IS_MAC, go, num, page_header, when
 
 
@@ -41,6 +42,8 @@ def _catalog_status() -> str:
 
 def render_home():
     page_header("Cosa vuoi fare?", "Scegli una delle due attività qui sotto.", show_back=False)
+    if IS_MAC:
+        home_card()          # versione del programma + «Aggiorna adesso», sempre in vista
 
     creds = ctl.credentials_status() if IS_MAC else None
     if IS_MAC and not creds["mcws"]:

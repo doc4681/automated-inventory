@@ -20,6 +20,7 @@ from pathlib import Path
 import requests
 
 API_VERSION = "2025-07"   # productSet: prodotto + variante + costo + foto in una chiamata
+LOCATION_NAME = "Vroomi Models"   # unica sede di magazzino usata per le quantità
 
 
 def _load_env(path: Path) -> None:
@@ -117,24 +118,31 @@ class Shopify:
         return None
 
     # ── magazzino ────────────────────────────────────────────────────────────
+    def locations(self) -> list[dict]:
+        """Sedi di magazzino del negozio: [{id, name, isActive}]."""
+        q = "{ locations(first: 50, includeInactive: true) { nodes { id name isActive } } }"
+        return self.gql(q)["locations"]["nodes"]
+
     def location_id(self) -> str:
-        """Sede di magazzino dove caricare la quantità delle schede nuove:
-        SHOPIFY_LOCATION_ID se impostato (gid://shopify/Location/... o solo il
-        numero), altrimenti la prima sede attiva del negozio. Richiede gli scope
-        read_locations (per cercarla) e write_inventory (per scrivere la quantità)."""
+        """Sede di magazzino dove si leggono e scrivono le quantità: SEMPRE «Vroomi Models»
+        (cercata per nome, maiuscole e spazi non contano; SHOPIFY_LOCATION_NAME in
+        credenziali.env solo se un giorno cambiasse nome). Mai un'altra sede (es. quella
+        del rappresentante fiscale): se non la trova si ferma con un errore chiaro.
+        Richiede gli scope read_locations e write_inventory."""
         if self._location_id:
             return self._location_id
-        env = os.environ.get("SHOPIFY_LOCATION_ID", "").strip()
-        if env:
-            self._location_id = env if env.startswith("gid://") else f"gid://shopify/Location/{env}"
-            return self._location_id
-        q = "{ locations(first: 10) { nodes { id name isActive } } }"
-        nodes = self.gql(q)["locations"]["nodes"]
-        active = [n for n in nodes if n.get("isActive")]
-        if not active:
-            raise RuntimeError("nessuna sede di magazzino attiva trovata su Shopify")
-        self._location_id = active[0]["id"]
-        print(f"  [Shopify] magazzino: {active[0]['name']}", flush=True)
+        want = os.environ.get("SHOPIFY_LOCATION_NAME", "").strip() or LOCATION_NAME
+        key = re.sub(r"[^a-z0-9]", "", want.lower())
+        nodes = self.locations()
+        match = [n for n in nodes if re.sub(r"[^a-z0-9]", "", (n.get("name") or "").lower()) == key]
+        if not match:
+            names = ", ".join(n.get("name", "?") for n in nodes) or "nessuna"
+            raise RuntimeError(f"sede di magazzino «{want}» non trovata su Shopify (sedi: {names})")
+        loc = sorted(match, key=lambda n: not n.get("isActive"))[0]
+        if not loc.get("isActive"):
+            raise RuntimeError(f"la sede di magazzino «{loc['name']}» su Shopify è disattivata")
+        self._location_id = loc["id"]
+        print(f"  [Shopify] magazzino: {loc['name']}", flush=True)
         return self._location_id
 
     # ── creazione ────────────────────────────────────────────────────────────

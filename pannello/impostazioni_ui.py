@@ -1,12 +1,10 @@
 """
-impostazioni_ui.py — pagina "Impostazioni": password (credenziali.env), marchi e ricarichi,
-versione del programma (aggiornamenti).
+impostazioni_ui.py — pagina "Impostazioni": password (credenziali.env), marchi e ricarichi.
 """
 
 import streamlit as st
 
 from pannello import controller as ctl
-from pannello.aggiornamenti_ui import version_box
 from pannello.ui_common import page_header, step
 
 
@@ -76,7 +74,3 @@ def render_impostazioni():
                       on_click=ctl.open_in_mac, args=(ctl.MARKUP_FILE, True))
     st.caption("Dopo aver modificato un file, salvalo in TextEdit: il pannello usa subito "
                "i nuovi valori.")
-
-    # ── Versione del programma ───────────────────────────────────────────────
-    step(3, "Versione del programma")
-    version_box()

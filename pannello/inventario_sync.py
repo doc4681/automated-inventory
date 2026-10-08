@@ -10,6 +10,11 @@ inventario_sync.py — "Aggiorna l'inventario" in automatico, senza caricare fil
   5. con --apply le scrive su Shopify: quantità, costo, prezzo, prezzo barrato, tag SALE
      (con --solo-disponibilita solo la quantità; con --solo-prezzi niente listini, solo i prezzi)
 
+La quantità si scrive SEMPRE nella sede di magazzino «Vroomi Models» (Shopify.location_id).
+Se un prodotto ha merce anche in altre sedi (es. quella del rappresentante fiscale), quando
+lo si aggiorna la merce viene spostata tutta su Vroomi Models (le altre sedi vanno a 0):
+il controllo li conta come «spostati su Vroomi Models».
+
 Senza --apply non scrive niente su Shopify (è il "Controlla").
 Protezione: se troppi prodotti diventerebbero esauriti (listino sbagliato o
 incompleto) --apply si ferma, a meno di --forza.
@@ -40,7 +45,7 @@ from pannello.logic_v03 import (  # noqa: E402
     clean_currency, clean_qty, process_availability_only, process_inventory_v03,
     process_markup_only,
 )
-from shopify import Shopify, _load_env  # noqa: E402
+from shopify import LOCATION_NAME, Shopify, _load_env  # noqa: E402
 
 DATA_DIR = REPO / "dati"
 MCWS_DIR = DATA_DIR / "mcws"
@@ -155,12 +160,15 @@ def resolve_mcws(arg: str | None, fresh: bool) -> Path:
 
 # ─────────────────────────── Prodotti da Shopify ─────────────────────────────
 VARIANTS_QUERY = """
-query($cursor: String) {
-  productVariants(first: 200, after: $cursor) {
+query($cursor: String, $loc: ID!) {
+  productVariants(first: 150, after: $cursor) {
     pageInfo { hasNextPage endCursor }
     nodes {
       id sku barcode price compareAtPrice inventoryQuantity
-      inventoryItem { id tracked unitCost { amount } }
+      inventoryItem {
+        id tracked unitCost { amount }
+        inventoryLevel(locationId: $loc) { quantities(names: ["available"]) { quantity } }
+      }
       product { id handle title vendor status tags }
     }
   }
@@ -169,27 +177,34 @@ query($cursor: String) {
 
 def fetch_shopify_products(sh: Shopify) -> pd.DataFrame:
     """Tutte le varianti del negozio, con le stesse colonne dell'export Products.csv
-    usate dalla logica (+ ID interni per scrivere le modifiche)."""
+    usate dalla logica (+ ID interni per scrivere le modifiche).
+    Variant Inventory Qty = disponibili in TUTTE le sedi (quello che vede il cliente);
+    _vm_qty = disponibili nella sede Vroomi Models, _other_qty = nelle altre sedi."""
+    location = sh.location_id()
     rows, cursor, no_sku, pages = [], None, 0, 0
     while True:
         pages += 1
-        page = sh.gql(VARIANTS_QUERY, {"cursor": cursor})["productVariants"]
+        page = sh.gql(VARIANTS_QUERY, {"cursor": cursor, "loc": location})["productVariants"]
         for v in page["nodes"]:
             sku = (v.get("sku") or "").strip()
             if not sku:
                 no_sku += 1
                 continue
             p, item = v["product"], v.get("inventoryItem") or {}
+            level = item.get("inventoryLevel")          # None = non presente in Vroomi Models
+            vm_qty = sum(q.get("quantity") or 0 for q in (level or {}).get("quantities") or [])
+            total = int(v.get("inventoryQuantity") or 0)
             rows.append({
                 COL_HANDLE: p["handle"], COL_TITLE: p["title"], COL_VENDOR: p.get("vendor") or "",
                 COL_STATUS: p["status"], COL_TAGS: ", ".join(p.get("tags") or []),
                 COL_SKU: sku, COL_BARCODE: v.get("barcode") or "",
-                COL_QTY: str(v.get("inventoryQuantity") or 0),
+                COL_QTY: str(total),
                 COL_COST: ((item.get("unitCost") or {}).get("amount") or ""),
                 COL_PRICE: v.get("price") or "",
                 COL_COMPARE: v.get("compareAtPrice") or "",
                 "_variant_id": v["id"], "_product_id": p["id"],
                 "_item_id": item.get("id", ""), "_tracked": bool(item.get("tracked")),
+                "_stocked": level is not None, "_vm_qty": vm_qty, "_other_qty": total - vm_qty,
             })
         if pages % 10 == 0:
             log(f"  … {len(rows)} prodotti letti")
@@ -241,6 +256,13 @@ def compute(df_shop: pd.DataFrame, prices_only: bool, df_mcws: pd.DataFrame,
         ch = diff_row(df_shop.loc[idx], new.loc[idx])
         if "qty" in ch and not df_shop.at[idx, "_tracked"]:
             ch.pop("qty")           # magazzino non tracciato su Shopify: la quantità non conta
+        if (not prices_only and "qty" not in ch and df_shop.at[idx, "_tracked"]
+                and df_shop.at[idx, "_other_qty"] != 0):
+            # merce in un'altra sede: va spostata su Vroomi Models (quantità totale uguale)
+            ch["move"] = int(df_shop.at[idx, "_other_qty"])
+            old = str(new.at[idx, COL_CHANGE_LOG] or "")
+            new.at[idx, COL_CHANGE_LOG] = " | ".join(
+                x for x in (old, f"LOC: {ch['move']} da altre sedi -> {LOCATION_NAME}") if x)
         changes.append(ch)
     return new, changes, logs
 
@@ -264,8 +286,8 @@ def _errors(res: dict) -> str:
     return "; ".join(e.get("message", str(e)) for e in res.get("userErrors") or [])
 
 
-def _set_quantities(sh: Shopify, location: str, items: list) -> dict:
-    """items = [(riga, inventoryItemId, quantità)] → {riga: errore}. A blocchi da 100;
+def _set_quantities(sh: Shopify, items: list) -> dict:
+    """items = [(riga, inventoryItemId, sede, quantità)] → {riga: errore}. A blocchi da 100;
     se un blocco viene rifiutato, riprova uno per uno per capire quale prodotto dà errore."""
     errors = {}
 
@@ -273,7 +295,7 @@ def _set_quantities(sh: Shopify, location: str, items: list) -> dict:
         return _errors(sh.gql(SET_QTY, {"input": {
             "name": "available", "reason": "correction", "ignoreCompareQuantity": True,
             "quantities": [{"inventoryItemId": item, "locationId": location, "quantity": q}
-                           for _, item, q in chunk]}})["inventorySetQuantities"])
+                           for _, item, location, q in chunk]}})["inventorySetQuantities"])
 
     for i in range(0, len(items), 100):
         chunk = items[i:i + 100]
@@ -294,6 +316,48 @@ def _set_quantities(sh: Shopify, location: str, items: list) -> dict:
     return errors
 
 
+ITEM_LEVELS = """
+query($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on InventoryItem {
+      id
+      inventoryLevels(first: 20) {
+        nodes { location { id } quantities(names: ["available"]) { quantity } }
+      }
+    }
+  }
+}"""
+ACTIVATE = """
+mutation($item: ID!, $loc: ID!) {
+  inventoryActivate(inventoryItemId: $item, locationId: $loc) {
+    inventoryLevel { id }
+    userErrors { field message }
+  }
+}"""
+
+
+def _other_levels(sh: Shopify, item_ids: list, location: str) -> dict:
+    """{inventoryItemId: [sedi diverse da `location` con quantità disponibile ≠ 0]}."""
+    out: dict = {}
+    for k in range(0, len(item_ids), 50):
+        for node in sh.gql(ITEM_LEVELS, {"ids": item_ids[k:k + 50]})["nodes"]:
+            if not node:
+                continue
+            out[node["id"]] = [
+                lv["location"]["id"] for lv in node["inventoryLevels"]["nodes"]
+                if lv["location"]["id"] != location
+                and sum(q.get("quantity") or 0 for q in lv.get("quantities") or []) != 0]
+    return out
+
+
+def _activate(sh: Shopify, item: str, location: str) -> str:
+    """Rende il prodotto gestibile nella sede (se non lo era). Ritorna l'errore o ""."""
+    try:
+        return _errors(sh.gql(ACTIVATE, {"item": item, "loc": location})["inventoryActivate"])
+    except Exception as e:
+        return str(e)
+
+
 def _money(x: float) -> str:
     return f"{x:.2f}"
 
@@ -303,16 +367,29 @@ def apply_changes(sh: Shopify, df: pd.DataFrame, changes: list) -> dict:
     errors: dict = {}
     todo = [i for i, ch in enumerate(changes) if ch]
 
-    # 1. Quantità (sede di magazzino del negozio, come per le schede delle newsletter)
-    qty = [(i, df.iloc[i]["_item_id"], changes[i]["qty"][1]) for i in todo if "qty" in changes[i]]
-    if qty:
-        locations = [n for n in sh.gql("{ locations(first: 10) { nodes { id isActive } } }")
-                     ["locations"]["nodes"] if n.get("isActive")]
-        if len(locations) > 1:
-            log(f"  ⚠️ Il negozio ha {len(locations)} sedi di magazzino: aggiorno solo la "
-                "principale (SHOPIFY_LOCATION_ID in credenziali.env per sceglierne un'altra).")
-        log(f"  Disponibilità: {len(qty)} prodotti…")
-        errors.update(_set_quantities(sh, sh.location_id(), qty))
+    # 1. Quantità: sempre nella sede Vroomi Models; le altre sedi del prodotto vanno a 0
+    moves = [i for i in todo if "qty" in changes[i] or "move" in changes[i]]
+    if moves:
+        loc = sh.location_id()
+        others = _other_levels(sh, [df.iloc[i]["_item_id"] for i in moves
+                                    if df.iloc[i]["_other_qty"] != 0], loc)
+        items = []
+        for i in moves:
+            row, ch = df.iloc[i], changes[i]
+            target = ch["qty"][1] if "qty" in ch else max(clean_qty(row[COL_QTY]), 0)
+            if row["_stocked"] or target != 0:
+                if not row["_stocked"]:
+                    err = _activate(sh, row["_item_id"], loc)
+                    if err:
+                        errors[i] = f"quantità: {err}"
+                        continue
+                items.append((i, row["_item_id"], loc, target))
+            items += [(i, row["_item_id"], other, 0) for other in others.get(row["_item_id"], [])]
+        n_move = sum(1 for i in moves if "move" in changes[i])
+        log(f"  Disponibilità: {len(moves)} prodotti (sede {LOCATION_NAME}"
+            + (f", di cui {n_move} spostati da altre sedi" if n_move else "") + ")…")
+        for i, err in _set_quantities(sh, items).items():
+            errors[i] = (errors.get(i, "") + f" {err}").strip()
 
     # 2. Prezzo, prezzo barrato e costo: una chiamata per prodotto
     by_product: dict = {}
@@ -456,6 +533,7 @@ def main() -> int:
     log(f"  diventano esauriti: {out_of_stock}")
     log(f"  prezzi cambiati: {n('price')}")
     log(f"  costi cambiati: {n('cost')}")
+    log(f"  spostati su {LOCATION_NAME}: {n('move')}")
     log(f"  disponibili ora nel negozio: {available}")
 
     too_many = out_of_stock > max(MIN_OUT_OF_STOCK_BLOCK, available * MAX_OUT_OF_STOCK_PCT / 100)

@@ -188,6 +188,11 @@ def _result(log: Path) -> None:
         cols[2].metric("Diventano esauriti", num(s["out"]))
         cols[3].metric("Prezzi cambiati", num(s["prices"]), help=f"Costi cambiati: {num(s['costs'])}")
 
+    if s["moved"]:
+        st.caption(f"📍 {num(s['moved'])} prodotti hanno merce in un'altra sede di magazzino: "
+                   "applicando, la quantità viene spostata tutta su **Vroomi Models** "
+                   "(il totale non cambia).")
+
     if s["too_many"]:
         st.warning(f"⚠️ **{num(s['out'])} prodotti** su {num(s['available'])} disponibili "
                    "diventerebbero esauriti: sono tanti. Forse il listino è incompleto. "

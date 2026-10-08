@@ -44,7 +44,9 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 apply_style()
-update_banner()   # «È disponibile un aggiornamento» (controllo una volta al giorno)
+page = current_page()
+if page != "home":    # nella pagina iniziale c'è la scheda «Programma» (home_ui.py)
+    update_banner()   # «È disponibile un aggiornamento» (controllo una volta al giorno)
 
 {
     "home": render_home,
@@ -52,4 +54,4 @@ update_banner()   # «È disponibile un aggiornamento» (controllo una volta al 
     "newsletter": render_newsletter,
     "catalogo": render_catalogo,
     "impostazioni": render_impostazioni,
-}[current_page()]()
+}[page]()

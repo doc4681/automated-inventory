@@ -32,7 +32,7 @@ Si apre su **"Cosa vuoi fare?"** con due scelte principali; ogni pagina è guida
 | 📦 **Aggiorna l'inventario** | **In automatico** (serve la chiave Shopify): niente file da caricare, legge i prodotti da Shopify, usa il listino MCWS scaricato (o ne scarica uno nuovo), premi **Controlla** e poi **Applica su Shopify**. Oppure **con i file**, come prima: carichi l'export e scarichi il file da importare. |
 | 🆕 **Crea prodotti dalle newsletter** | Scrivi il numero della newsletter (o scegli tutte le recenti), premi **Controlla** (non crea niente) e poi **Crea le bozze su Shopify**. Mostra l'elenco dei prodotti creati / da creare. |
 | 🔁 **Catalogo fornitori** | L'ultimo catalogo carmodel + MCWS da scaricare, **Aggiorna adesso** con l'avanzamento passo per passo, l'interruttore dell'aggiornamento automatico. |
-| ⚙️ **Impostazioni** | Password MCWS e chiave Shopify (si scrivono lì, finiscono in `credenziali.env`), pulsanti per modificare marchi e ricarichi, versione del programma con **Controlla adesso**. |
+| ⚙️ **Impostazioni** | Password MCWS e chiave Shopify (si scrivono lì, finiscono in `credenziali.env`), pulsanti per modificare marchi e ricarichi. |
 
 Durante la run si apre una finestra di Chrome: è normale (serve a superare Cloudflare), **non chiuderla**.
 
@@ -78,7 +78,9 @@ su Shopify in **BOZZA** i prodotti che non ci sono ancora. Funziona su Mac **Int
 Due modi di usarlo, stesso programma:
 - **Pannello** → 🆕 **Crea prodotti dalle newsletter**: scrivi il numero della newsletter (es. `15538`,
   il numero nel suo link) o scegli tutte le recenti, premi **🔍 Controlla** (non crea niente) e poi
-  **✅ Crea le bozze su Shopify**.
+  **✅ Ora crea queste N bozze**: usa i prodotti trovati dal controllo, **senza riaprire Chrome né
+  rifare il login** su MCWS (il controllo vale 48 ore; prima di creare ogni scheda ricontrolla che
+  non esista già).
 - **Script con doppio click** dentro `Vroomi-Newsletter/` (quelli che usa Giuliano):
   `1 - PROVA`, `2 - CREA SCHEDE DRAFT` (tutte), `3 - CREA UNA NEWSLETTER` (per ID).
   Istruzioni in `Vroomi-Newsletter/LEGGIMI.txt`.
@@ -132,10 +134,12 @@ Serve **Google Chrome** e **Python 3.10 o più recente** (https://www.python.org
 `dati/`, `RISULTATO/`, `logs/` e l'ambiente Python restano. Per usare un'altra cartella:
 `… | bash -s -- "$HOME/Desktop/Vroomi"`.
 
-**Oppure dal pannello (aggiornamento automatico):** una volta al giorno il pannello chiede a GitHub
-se c'è una versione nuova (l'ultima del ramo `main`, la stessa che scarica la riga qui sopra). Se
-c'è, in cima a ogni pagina compare **🆕 È disponibile un aggiornamento** con l'elenco di cosa cambia.
-Premi **⬆️ Aggiorna adesso**: rilancia `installa.sh` su questa cartella, reinstalla le dipendenze se
+**Oppure dal pannello (aggiornamento automatico):** in cima alla **pagina iniziale** c'è sempre la
+scheda **Programma** con la versione installata e i pulsanti **⬆️ Aggiorna adesso** e **🔄 Controlla
+adesso**. Una volta al giorno il pannello chiede a GitHub se c'è una versione nuova (l'ultima del
+ramo `main`, la stessa che scarica la riga qui sopra); se c'è, la scheda lo dice con l'elenco di
+cosa cambia e nelle altre pagine compare in alto **🆕 È disponibile un aggiornamento**.
+**⬆️ Aggiorna adesso**: rilancia `installa.sh` su questa cartella, reinstalla le dipendenze se
 sono cambiate, chiude il pannello (e la sua finestra del Terminale) e lo riapre in una nuova scheda
 del browser — la scheda vecchia si può chiudere. Il pulsante è spento mentre gira il catalogo, una
 newsletter o l'inventario. Se l'installazione non riesce il pannello resta com'era e mostra l'errore
@@ -191,7 +195,10 @@ e **Solo i prezzi** (ricarichi attuali, niente listini). Le stesse tre ci sono a
 Protezioni: un listino MCWS scaricato con meno di 1000 righe (o meno della metà del precedente) viene
 scartato; se più del 30% dei prodotti disponibili diventerebbe esaurito **non applica niente**
 finché non spunti «applica lo stesso». Rilanciare è sicuro: riscrive solo quello che è ancora diverso.
-La quantità va nella sede di magazzino principale (o `SHOPIFY_LOCATION_ID` in `credenziali.env`).
+La quantità va **sempre nella sede di magazzino «Vroomi Models»** (cercata per nome; mai quella del
+rappresentante fiscale). Se un prodotto ha merce in un'altra sede, quando lo si aggiorna la merce
+viene spostata tutta su Vroomi Models (il controllo li conta come «spostati su Vroomi Models»).
+Anche le schede create dalle newsletter caricano la quantità su Vroomi Models.
 Scope dell'app Shopify: `read_products`, `write_products`, `read_inventory`, `write_inventory`,
 `read_locations` (gli stessi dello strumento newsletter). Report in `dati/inventario/`, log in
 `logs/inventario_<data>.log`. Da Terminale: `.venv/bin/python -m pannello.inventario_sync`
