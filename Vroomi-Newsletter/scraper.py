@@ -177,16 +177,33 @@ def parse_product_card(card) -> Product | None:
     )
 
 
-def parse_newsletter(soup: BeautifulSoup) -> list[Product]:
+def parse_newsletter(soup: BeautifulSoup, scarti: list | None = None) -> list[Product]:
+    """Prodotti della pagina, senza doppioni (stesso site_id). Se si passa la lista
+    `scarti`, ci finiscono le card lasciate fuori: (motivo, descrizione) — così il log
+    può dire quale prodotto della pagina manca e perché."""
+    cards = soup.select("div.product, .row.product")
+    matched = {id(c) for c in cards}
     products: list[Product] = []
-    for card in soup.select("div.product, .row.product"):
+    for card in cards:
         p = parse_product_card(card)
         if p:
             products.append(p)
+        elif scarti is not None:
+            # contenitori di altre card (o pezzi di una card) non sono prodotti mancanti
+            nested = (any(id(a) in matched for a in card.parents)
+                      or any(id(d) in matched for d in card.find_all(True)))
+            text = " ".join(card.get_text(" ", strip=True).split())
+            if not nested and text:
+                scarti.append(("card non letta (senza codice/link)", text[:90]))
     # dedup per site_id preservando l'ordine
     uniq: dict[str, Product] = {}
     for p in products:
-        uniq.setdefault(p.site_id, p)
+        if p.site_id in uniq:
+            if scarti is not None and p.sku != uniq[p.site_id].sku:
+                scarti.append(("stesso ID sito di un altro prodotto",
+                               f"sku={p.sku} (ID {p.site_id}, già usato da sku={uniq[p.site_id].sku})"))
+            continue
+        uniq[p.site_id] = p
     return list(uniq.values())
 
 

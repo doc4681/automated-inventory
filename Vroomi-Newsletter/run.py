@@ -356,8 +356,15 @@ def main() -> int:
             if soup is None:
                 print(f"  !! {n.brand} ({n.id}): pagina non caricata")
                 continue
-            prods = scraper.parse_newsletter(soup)
+            scarti: list = []
+            prods = scraper.parse_newsletter(soup, scarti)
             print(f"\n== {n.brand or 'newsletter'} ({n.id}): {len(prods)} prodotti ==")
+            for motivo, chi in scarti:
+                print(f"  [NON LETTO — {motivo}] {chi}")
+            # conteggio per newsletter: alla fine ogni prodotto della pagina ha un esito
+            conto = {"da creare": 0, "creati": 0, "già nel negozio": 0, "non disponibili": 0,
+                     "senza prezzo": 0, "marchio senza ricarico": 0, "errori": 0,
+                     "non letti dalla pagina": len(scarti)}
             if prods and all(p.disponibilita == etichette.SCONOSCIUTA for p in prods):
                 print("  [ATTENZIONE] nessuna etichetta di disponibilità trovata in questa "
                       "newsletter: il sito potrebbe essere cambiato. Processo tutti i prodotti.")
@@ -371,34 +378,34 @@ def main() -> int:
                             f"  — {p.brand_auto} {p.description}  (newsletter {n.id})")
                     not_available.append(riga)
                     print(f"  [SALTATO — NON DISPONIBILE] {riga}")
-                    report.append({**dict.fromkeys(REPORT_FIELDS, ""),
-                                   "newsletter_id": n.id, "brand": n.brand,
-                                   "status": "SALTATO: NON DISPONIBILE",
-                                   "etichetta": p.etichetta, "site_id": p.site_id, "sku": p.sku,
-                                   "title": f"{p.brand_auto} - {p.description}",
-                                   "scale": p.scale, "cost": p.cost,
-                                   "image_url": p.image_url, "detail_url": p.detail_url})
+                    report.append(_skipped_row(n, p, "SALTATO: NON DISPONIBILE"))
+                    conto["non disponibili"] += 1
                     continue
                 if p.disponibilita == etichette.SCONOSCIUTA:
                     no_label.append(f"sku={p.sku} (newsletter {n.id})")
                     print(f"  [etichetta non trovata: processo come prima] sku={p.sku}")
                 if not p.cost:
                     no_price += 1
+                    conto["senza prezzo"] += 1
+                    print(f"  [SALTATO — SENZA PREZZO] sku={p.sku}  {p.brand_auto} {p.description}")
+                    report.append(_skipped_row(n, p, "SALTATO: SENZA PREZZO"))
                     continue
 
                 # markup del prodotto: il trademark scritto sul prodotto puo'
                 # differire da quello della newsletter (es. 'MITICA-DIECAST' vs
                 # 'MITICA'); in quel caso vale il brand della newsletter. Senza
                 # markup il calcolo prezzo andava in crash (None * float).
-                if not n.brand and not cat.is_valid(p.trademark):
+                if (not n.brand and not cat.is_valid(p.trademark)) or (
+                        cat.markup_for(p.trademark) is None
+                        and not (n.brand and cat.markup_for(n.brand) is not None)):
                     no_markup += 1
+                    conto["marchio senza ricarico"] += 1
+                    print(f"  [SALTATO — MARCHIO NON VALIDO O SENZA RICARICO] sku={p.sku}"
+                          f"  marchio={p.trademark}  {p.brand_auto} {p.description}")
+                    report.append(_skipped_row(n, p, "SALTATO: MARCHIO SENZA RICARICO"))
                     continue
                 if cat.markup_for(p.trademark) is None:
-                    if n.brand and cat.markup_for(n.brand) is not None:
-                        p.trademark = n.brand
-                    else:
-                        no_markup += 1
-                        continue
+                    p.trademark = n.brand
 
                 if not args.no_enrich:
                     det = bs.get_soup(p.detail_url)
@@ -451,6 +458,12 @@ def main() -> int:
                 report.append(row)
                 if status in ("DA-CREARE", "DRY-RUN"):
                     pending.append({"payload": payload, "row": row})
+                conto[{"ESISTE": "già nel negozio", "CREATO": "creati",
+                       "DA-CREARE": "da creare", "DRY-RUN": "da creare"}.get(status, "errori")] += 1
+
+            totale = sum(conto.values())
+            print(f"  ── Newsletter {n.id}: {totale} prodotti sulla pagina → "
+                  + ", ".join(f"{v} {k}" for k, v in conto.items() if v))
             if args.limit and processed >= args.limit:
                 break
     finally:
@@ -461,7 +474,17 @@ def main() -> int:
                    pending=pending, not_available=not_available, no_label=no_label)
 
 
-# Colonne del report (i prodotti saltati per l'etichetta hanno le stesse, in parte vuote)
+def _skipped_row(n, p, status: str) -> dict:
+    """Riga del report per un prodotto della newsletter che non diventa bozza."""
+    return {**dict.fromkeys(REPORT_FIELDS, ""),
+            "newsletter_id": n.id, "brand": n.brand, "status": status,
+            "etichetta": p.etichetta, "site_id": p.site_id, "sku": p.sku,
+            "title": f"{p.brand_auto} - {p.description}", "vendor": p.trademark,
+            "scale": p.scale, "cost": p.cost if p.cost else "",
+            "image_url": p.image_url, "detail_url": p.detail_url}
+
+
+# Colonne del report (i prodotti saltati hanno le stesse, in parte vuote)
 REPORT_FIELDS = ["newsletter_id", "brand", "status", "etichetta", "site_id", "sku", "title",
                  "vendor", "scale", "car_model", "year", "cost", "markup", "price",
                  "material", "note", "image_url", "detail_url", "admin_url"]
