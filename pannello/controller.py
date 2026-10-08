@@ -376,6 +376,7 @@ def newsletter_summary(path: Path | None) -> dict:
         "to_create": num("da creare (dry-run):"),
         "no_price": num("Prodotti senza prezzo (saltati):"),
         "not_available": _not_available(text),
+        "tallies": re.findall(r"^\s*── (Newsletter .+)$", text, re.M),
         "no_label": num("Etichetta di disponibilità non trovata (processati come prima):"),
         "create_errors": num("ERRORI in creazione su Shopify:"),
         "errors": errors,

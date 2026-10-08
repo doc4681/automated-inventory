@@ -21,6 +21,9 @@ STATUS_LABELS = {
     "DRY-RUN": "🆕 Da creare (non verificato su Shopify)",
     "ESISTE": "✔️ Già nel negozio",
     "CREATO": "✅ Creato come bozza",
+    "SALTATO: NON DISPONIBILE": "⏭️ Saltato: non disponibile (etichetta azzurra)",
+    "SALTATO: SENZA PREZZO": "⏭️ Saltato: senza prezzo",
+    "SALTATO: MARCHIO SENZA RICARICO": "⏭️ Saltato: marchio non valido o senza ricarico",
 }
 
 
@@ -75,8 +78,9 @@ def _report_table(path: Path | None) -> None:
     if df.empty:
         return
     df["Stato"] = df["status"].map(lambda s: STATUS_LABELS.get(s, f"❌ {s}"))
-    view = df[["Stato", "title", "brand", "price", "admin_url"]].rename(columns={
-        "title": "Prodotto", "brand": "Newsletter", "price": "Prezzo €", "admin_url": "Su Shopify"})
+    view = df[["Stato", "sku", "title", "brand", "price", "admin_url"]].rename(columns={
+        "sku": "SKU", "title": "Prodotto", "brand": "Newsletter", "price": "Prezzo €",
+        "admin_url": "Su Shopify"})
     st.dataframe(view, use_container_width=True, hide_index=True,
                  column_config={"Su Shopify": st.column_config.LinkColumn(display_text="apri")})
 
@@ -128,6 +132,8 @@ def _result(log: Path) -> None:
         st.caption(f"⚠️ Per {num(s['no_label'])} prodotti non ho trovato l'etichetta di "
                    "disponibilità: li ho trattati come disponibili (dettaglio nel registro).")
 
+    for t in s["tallies"]:
+        st.caption(f"📋 {t}")
     _report_table(s["report"])
     with st.expander("🔎 Dettaglio tecnico (registro completo)"):
         st.code(ctl.tail_log(log, 400) or "—", language="text")
