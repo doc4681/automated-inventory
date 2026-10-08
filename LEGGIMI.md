@@ -180,6 +180,10 @@ ricarichi, tag SALE, PRE-ORDER mai toccati).
 | Giacenze BBR | Lo carichi **una volta**: il pannello lo ricorda (`dati/bbr/`) e ti avvisa se ha più di 3 giorni |
 | Importare il file su Shopify | **«Applica su Shopify»**: scrive quantità, costo, prezzo, prezzo barrato e tag SALE |
 
+Tre scelte: **Disponibilità, costi e prezzi** (consigliato), **Solo la disponibilità** (esaurito /
+disponibile con gli stessi listini e le stesse regole, ma costi, prezzi e tag SALE restano come sono)
+e **Solo i prezzi** (ricarichi attuali, niente listini). Le stesse tre ci sono anche «con i file».
+
 1. Premi **🔍 Controlla**: non cambia niente, mostra quanti prodotti tornano disponibili / diventano
    esauriti / cambiano prezzo, con l'elenco (scaricabile in Excel).
 2. Se va bene premi **✅ Applica queste N modifiche su Shopify** (usa gli stessi listini del controllo).
@@ -191,7 +195,7 @@ La quantità va nella sede di magazzino principale (o `SHOPIFY_LOCATION_ID` in `
 Scope dell'app Shopify: `read_products`, `write_products`, `read_inventory`, `write_inventory`,
 `read_locations` (gli stessi dello strumento newsletter). Report in `dati/inventario/`, log in
 `logs/inventario_<data>.log`. Da Terminale: `.venv/bin/python -m pannello.inventario_sync`
-(controllo) e `--apply` (applica); opzioni `--solo-prezzi`, `--mcws-nuovo`, `--senza-bbr`.
+(controllo) e `--apply` (applica); opzioni `--solo-prezzi`, `--solo-disponibilita`, `--mcws-nuovo`, `--senza-bbr`.
 
 **📄 Con i file**, come prima (anche su Streamlit Cloud, `app.py`): carichi i CSV (Shopify + listino
 MCWS/BBR) e scarichi il file di aggiornamento. Logica in `pannello/logic.py` (formato originale) e

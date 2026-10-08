@@ -20,7 +20,8 @@ import streamlit as st
 from pannello import controller as ctl
 from pannello.logic import process_inventory, OUTPUT_PREFIX as OUTPUT_PREFIX_LEGACY, COL_SHOPIFY_SKU
 from pannello.logic_v03 import (
-    process_inventory_v03, process_markup_only, OUTPUT_PREFIX as OUTPUT_PREFIX_V03, COL_MCWS_CODE,
+    process_availability_only, process_inventory_v03, process_markup_only,
+    OUTPUT_PREFIX as OUTPUT_PREFIX_V03, COL_MCWS_CODE,
 )
 from pannello.ui_common import IS_MAC, go, num, page_header, step, when
 from pannello.inventario_auto_ui import render_auto as _render_auto
@@ -33,12 +34,15 @@ MARKUP_FILE = ctl.MARKUP_FILE
 # al giro successivo. L'export .xlsx forza queste colonne come Testo.
 TEXT_FORCED_COLUMNS = [COL_SHOPIFY_SKU, COL_MCWS_CODE, "Our Code"]
 
-FULL, PRICES, LEGACY = "full", "prices", "legacy"
+FULL, QTY, PRICES, LEGACY = "full", "qty", "prices", "legacy"
 AUTO, MANUAL = "auto", "manual"
 MODES = {
     FULL: ("Disponibilità, costi e prezzi  (consigliato)",
            "Segna come esauriti i prodotti che i fornitori non hanno più, rimette disponibili "
            "quelli tornati in magazzino e aggiorna costi e prezzi di vendita."),
+    QTY: ("Solo la disponibilità",
+          "Segna come esauriti i prodotti che i fornitori non hanno più e rimette disponibili "
+             "quelli tornati in magazzino. Costi, prezzi e tag SALE restano come sono."),
     PRICES: ("Solo i prezzi",
              "Ricalcola i prezzi di vendita con i ricarichi attuali, senza toccare la "
              "disponibilità. Serve solo l'export di Shopify."),
@@ -106,14 +110,15 @@ def _process(mode, file_shop, src_mcws, file_bbr, use_bbr, only_changes, include
             df, stats, duplicates, log = process_inventory(df_shop, df_mcws, df_bbr, f_tm,
                                                            enable_bbr=use_bbr)
             prefix = OUTPUT_PREFIX_LEGACY
-        elif mode == FULL:
+        elif mode in (FULL, QTY):
             df_mcws = load_dataframe(src_mcws)
             df_bbr = load_dataframe(file_bbr) if (use_bbr and file_bbr) else pd.DataFrame()
+            process = process_inventory_v03 if mode == FULL else process_availability_only
             with open(MARKUP_FILE, encoding="utf-8") as f_mk:
-                df, stats, duplicates, log = process_inventory_v03(
+                df, stats, duplicates, log = process(
                     df_shop, df_mcws, df_bbr, f_mk, f_tm, include_change_log=include_log,
                     only_changes=only_changes, enable_bbr=use_bbr)
-            prefix = OUTPUT_PREFIX_V03
+            prefix = OUTPUT_PREFIX_V03 if mode == FULL else "AVAILABILITY_UPDATE"
         else:
             with open(MARKUP_FILE, encoding="utf-8") as f_mk:
                 df, stats, log = process_markup_only(df_shop, f_mk, f_tm)
@@ -139,7 +144,7 @@ def _show_result(r: dict) -> None:
                        help="Prodotti senza costo o di marchi senza ricarico.")
     else:
         inv = stats if mode == LEGACY else stats["inventory"]
-        cols = st.columns(4 if mode == FULL else 3)
+        cols = st.columns(4 if mode == FULL else 3)   # QTY e LEGACY: solo disponibilità
         cols[0].metric("Prodotti controllati", num(inv["total"]))
         cols[1].metric("Tornano disponibili", num(inv["updates_1"]))
         cols[2].metric("Diventano esauriti", num(inv["updates_0"]))
@@ -255,7 +260,7 @@ def _render_manual():
                                             type=["csv", "xls", "xlsx"], key=f"up_bbr_{mode}")
 
     only_changes, include_log = True, True
-    if mode == FULL:
+    if mode in (FULL, QTY):
         with st.expander("⚙️ Opzioni del file finale"):
             only_changes = st.radio(
                 "Cosa mettere nel file", ["changed", "all"],

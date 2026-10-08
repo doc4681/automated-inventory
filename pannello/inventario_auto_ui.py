@@ -17,11 +17,14 @@ import streamlit as st
 from pannello import controller as ctl
 from pannello.ui_common import go, job_error, num, step, when
 
-FULL, PRICES = "full", "prices"
+FULL, QTY, PRICES = "full", "qty", "prices"
 MODES = {
     FULL: ("Disponibilità, costi e prezzi  (consigliato)",
            "Segna come esauriti i prodotti che i fornitori non hanno più, rimette disponibili "
            "quelli tornati in magazzino e aggiorna costi e prezzi di vendita."),
+    QTY: ("Solo la disponibilità",
+          "Segna come esauriti i prodotti che i fornitori non hanno più e rimette disponibili "
+             "quelli tornati in magazzino. Costi, prezzi e tag SALE restano come sono."),
     PRICES: ("Solo i prezzi",
              "Ricalcola i prezzi di vendita con i ricarichi attuali, senza toccare la "
              "disponibilità. Non servono listini."),
@@ -43,11 +46,12 @@ def _started(log: Path | None) -> datetime | None:
 def _start_check() -> None:
     """Callback di «Controlla»: legge le scelte dal modulo al momento del click."""
     ss = st.session_state
-    full = ss.get("inva_mode", FULL) == FULL
+    mode = ss.get("inva_mode", FULL)
+    lists = mode != PRICES                       # servono i listini dei fornitori
     try:
-        ctl.start_inventory(prices_only=not full, apply=False,
-                            mcws_fresh=full and ss.get("inva_mcws") == "fresh",
-                            use_bbr=full and ss.get("inva_bbr", True))
+        ctl.start_inventory(prices_only=not lists, apply=False, qty_only=mode == QTY,
+                            mcws_fresh=lists and ss.get("inva_mcws") == "fresh",
+                            use_bbr=lists and ss.get("inva_bbr", True))
     except Exception as e:
         ss["inva_error"] = str(e)
 
@@ -59,6 +63,7 @@ def _start_apply() -> None:
     info = ctl.inventory_info()
     try:
         ctl.start_inventory(prices_only=info.get("prices_only", False), apply=True,
+                            qty_only=info.get("qty_only", False),
                             mcws=s["mcws_file"], bbr=s["bbr_file"],
                             use_bbr=info.get("use_bbr", True),
                             force=st.session_state.get("inva_force", False))
@@ -168,10 +173,16 @@ def _result(log: Path) -> None:
         st.caption(" · ".join(x for x in sources if x))
 
     prices_only = info.get("prices_only", False)
-    cols = st.columns(2 if prices_only else 4)
+    qty_only = info.get("qty_only", False)
+    if qty_only:
+        st.caption("Solo la disponibilità: costi, prezzi e tag SALE non vengono toccati.")
+    cols = st.columns(2 if prices_only else 3 if qty_only else 4)
     cols[0].metric("Prodotti controllati", num(s["read"]))
     if prices_only:
         cols[1].metric("Prezzi da cambiare", num(s["prices"]))
+    elif qty_only:
+        cols[1].metric("Tornano disponibili", num(s["back"]))
+        cols[2].metric("Diventano esauriti", num(s["out"]))
     else:
         cols[1].metric("Tornano disponibili", num(s["back"]))
         cols[2].metric("Diventano esauriti", num(s["out"]))
@@ -257,7 +268,7 @@ def render_auto() -> None:
 
     ready = True
     n = 2
-    if mode == FULL:
+    if mode != PRICES:
         step(n, "Listini dei fornitori")
         n += 1
         with st.container(border=True):
