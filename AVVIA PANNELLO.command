@@ -89,4 +89,10 @@ echo "✅ Apro il pannello nel browser… (lascia aperta questa finestra)"
 echo "   Se non si apre da solo, vai su:  http://localhost:8501"
 echo ""
 
+# ── A ogni avvio: se su GitHub c'è una versione nuova la scarica (con notifica),
+#    riparte da questo file aggiornato e poi apre il pannello (pannello/aggiornamenti.py).
+#    «exec»: questo file può essere sostituito dall'aggiornamento senza problemi.
+if ./.venv/bin/python -c "import pannello.aggiornamenti" 2>/dev/null; then
+  exec ./.venv/bin/python -m pannello.aggiornamenti --avvio
+fi
 exec ./.venv/bin/python -m streamlit run app.py

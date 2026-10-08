@@ -369,8 +369,9 @@ KEEP_BBR = 15
 
 def start_inventory(prices_only: bool, apply: bool, mcws_fresh: bool = False,
                     mcws: str = "", bbr: str = "", use_bbr: bool = True,
-                    force: bool = False) -> Path:
-    """Lancia pannello/inventario_sync.py in background. apply=False → solo controllo."""
+                    force: bool = False, qty_only: bool = False) -> Path:
+    """Lancia pannello/inventario_sync.py in background. apply=False → solo controllo.
+    qty_only=True → solo la disponibilità (costi, prezzi e tag non si toccano)."""
     if inventory_running():
         raise RuntimeError("Un aggiornamento dell'inventario è già in corso.")
     LOG_DIR.mkdir(exist_ok=True)
@@ -386,6 +387,8 @@ def start_inventory(prices_only: bool, apply: bool, mcws_fresh: bool = False,
     if prices_only:
         args.append("--solo-prezzi")
     else:
+        if qty_only:
+            args.append("--solo-disponibilita")
         if mcws:
             args += ["--mcws", mcws]
         elif mcws_fresh:
@@ -403,6 +406,7 @@ def start_inventory(prices_only: bool, apply: bool, mcws_fresh: bool = False,
                                 cwd=str(REPO), env=env, start_new_session=True)
     INVENTORY_STATE.write_text(f"{proc.pid} {logfile}", encoding="utf-8")
     INVENTORY_INFO.write_text(json.dumps({"apply": apply, "prices_only": prices_only,
+                                          "qty_only": qty_only and not prices_only,
                                           "use_bbr": use_bbr}), encoding="utf-8")
     return logfile
 

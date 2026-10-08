@@ -458,6 +458,30 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
 
 
 # ==========================================
+# FUNZIONE: SOLO DISPONIBILITÀ
+# ==========================================
+def process_availability_only(df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file,
+                              include_change_log=True, only_changes=True, enable_bbr=True):
+    """Come process_inventory_v03 (stesse regole: BBR, MCWS, PRE-ORDER mai toccati) ma
+    cambia SOLO la quantità: costo, prezzo, prezzo barrato e tag restano quelli di Shopify."""
+    full_df, stats, duplicates, logs = process_inventory_v03(
+        df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file,
+        include_change_log=True, only_changes=False, enable_bbr=enable_bbr)
+    output_df = full_df.copy()
+    for col in (COL_COST, COL_PRICE, COL_COMPARE, COL_TAGS):
+        original = df_shopify[col] if col in df_shopify.columns else pd.Series("", index=df_shopify.index)
+        output_df[col] = original.astype(object).where(original.notna(), "")
+    output_df[COL_CHANGE_LOG] = output_df[COL_CHANGE_LOG].map(
+        lambda s: " | ".join(p for p in str(s).split(" | ") if p.startswith("QTY")))
+    stats['updated_cost'] = stats['updated_price'] = 0
+
+    final_df = output_df[output_df[COL_CHANGE_LOG] != ''].copy() if only_changes else output_df
+    if not include_change_log:
+        final_df = final_df.drop(columns=[COL_CHANGE_LOG], errors='ignore')
+    return final_df, stats, duplicates, logs
+
+
+# ==========================================
 # FUNZIONE: ADEGUAMENTO MARKUP ONLY
 # ==========================================
 def process_markup_only(df_shopify, markup_file, valid_trademarks_file):

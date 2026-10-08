@@ -8,6 +8,7 @@ inventario_sync.py — "Aggiorna l'inventario" in automatico, senza caricare fil
   3. giacenze BBR: l'ultimo file caricato nel pannello (dati/bbr/), facoltativo
   4. calcola le modifiche con la stessa logica di sempre (logic_v03.py)
   5. con --apply le scrive su Shopify: quantità, costo, prezzo, prezzo barrato, tag SALE
+     (con --solo-disponibilita solo la quantità; con --solo-prezzi niente listini, solo i prezzi)
 
 Senza --apply non scrive niente su Shopify (è il "Controlla").
 Protezione: se troppi prodotti diventerebbero esauriti (listino sbagliato o
@@ -16,7 +17,7 @@ incompleto) --apply si ferma, a meno di --forza.
 Uso (dalla cartella principale):
   .venv/bin/python -m pannello.inventario_sync                 # controllo
   .venv/bin/python -m pannello.inventario_sync --apply         # applica
-  opzioni: --solo-prezzi  --mcws-nuovo  --mcws FILE  --bbr FILE  --senza-bbr  --forza
+  opzioni: --solo-prezzi  --solo-disponibilita  --mcws-nuovo  --mcws FILE  --bbr FILE  --senza-bbr  --forza
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ sys.path.insert(0, str(REPO / "Vroomi-Newsletter"))   # client Shopify condiviso
 
 from pannello.logic_v03 import (  # noqa: E402
     COL_CHANGE_LOG, COL_COMPARE, COL_COST, COL_PRICE, COL_QTY, COL_SKU, COL_TAGS,
-    clean_currency, clean_qty, process_inventory_v03, process_markup_only,
+    clean_currency, clean_qty, process_availability_only, process_inventory_v03,
+    process_markup_only,
 )
 from shopify import Shopify, _load_env  # noqa: E402
 
@@ -222,13 +224,16 @@ def diff_row(old: pd.Series, new: pd.Series) -> dict:
 
 
 def compute(df_shop: pd.DataFrame, prices_only: bool, df_mcws: pd.DataFrame,
-            df_bbr: pd.DataFrame, use_bbr: bool) -> tuple[pd.DataFrame, list, list]:
-    """Ritorna (righe nuove, modifiche per riga, log). Le righe restano nello stesso ordine."""
+            df_bbr: pd.DataFrame, use_bbr: bool,
+            qty_only: bool = False) -> tuple[pd.DataFrame, list, list]:
+    """Ritorna (righe nuove, modifiche per riga, log). Le righe restano nello stesso ordine.
+    qty_only: solo la disponibilità (costi, prezzi e tag restano quelli di Shopify)."""
     with open(MARKUP_FILE, encoding="utf-8") as f_mk, open(TRADEMARKS_FILE, encoding="utf-8") as f_tm:
         if prices_only:
             new, _stats, logs = process_markup_only(df_shop, f_mk, f_tm)
         else:
-            new, _stats, _dup, logs = process_inventory_v03(
+            process = process_availability_only if qty_only else process_inventory_v03
+            new, _stats, _dup, logs = process(
                 df_shop, df_mcws, df_bbr, f_mk, f_tm, include_change_log=True,
                 only_changes=False, enable_bbr=use_bbr)
     changes = []
@@ -383,12 +388,18 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--apply", action="store_true", help="scrive davvero su Shopify")
     ap.add_argument("--solo-prezzi", action="store_true", help="ricalcola solo i prezzi (niente listini)")
+    ap.add_argument("--solo-disponibilita", action="store_true",
+                    help="aggiorna solo la disponibilità (costi, prezzi e tag non si toccano)")
     ap.add_argument("--mcws", help="listino MCWS da usare (default: l'ultimo scaricato)")
     ap.add_argument("--mcws-nuovo", action="store_true", help="scarica adesso un listino MCWS nuovo")
     ap.add_argument("--bbr", help="giacenze BBR da usare (default: l'ultimo file caricato)")
     ap.add_argument("--senza-bbr", action="store_true", help="non considerare le giacenze BBR")
     ap.add_argument("--forza", action="store_true", help="applica anche se troppi prodotti diventano esauriti")
     args = ap.parse_args()
+    if args.solo_prezzi and args.solo_disponibilita:
+        ap.error("--solo-prezzi e --solo-disponibilita non vanno insieme")
+    what = ("solo prezzi" if args.solo_prezzi else
+            "solo disponibilità" if args.solo_disponibilita else "disponibilità, costi e prezzi")
 
     _load_env(REPO / "credenziali.env")
     _load_env(Path.home() / ".env.vroomi")
@@ -396,7 +407,7 @@ def main() -> int:
     log("════════════════════════════════════════════════════════")
     log(f"VROOMI — AGGIORNA L'INVENTARIO {'[APPLICA SU SHOPIFY]' if args.apply else '[CONTROLLO]'}")
     log(f"Avvio: {datetime.now():%d/%m/%Y %H:%M:%S}  |  "
-        f"{'solo prezzi' if args.solo_prezzi else 'disponibilità, costi e prezzi'}")
+        f"{what}")
     log("════════════════════════════════════════════════════════")
 
     df_mcws = df_bbr = pd.DataFrame()
@@ -430,7 +441,8 @@ def main() -> int:
         raise SystemExit("ERRORE: Shopify non ha restituito nessun prodotto.")
 
     log("▶ [3/4] Confronto con i listini e i ricarichi")
-    new, changes, logic_log = compute(df_shop, args.solo_prezzi, df_mcws, df_bbr, use_bbr)
+    new, changes, logic_log = compute(df_shop, args.solo_prezzi, df_mcws, df_bbr, use_bbr,
+                                      qty_only=args.solo_disponibilita)
     for m in logic_log:
         if not str(m).startswith("[CHECK"):
             log(f"  {m}")
