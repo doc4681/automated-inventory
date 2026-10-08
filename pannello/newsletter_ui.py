@@ -121,8 +121,11 @@ def _progress() -> None:
     @st.fragment(run_every=2 if running else None)
     def area():
         log = ctl.newsletter_logfile()
-        if running and not ctl.newsletter_running():
-            st.rerun()          # finito: ridisegna tutta la pagina (riattiva i pulsanti)
+        if ctl.newsletter_running() != running:
+            # Lavoro finito, oppure appena partito da un pulsante qui dentro («Applica» /
+            # «Crea le bozze»): il riquadro ricorda ancora lo stato vecchio, quindi
+            # ridisegna tutta la pagina (avanzamento, pulsanti, risultato).
+            st.rerun()
         if running:
             with st.container(border=True):
                 st.markdown("### ⏳ Sto lavorando…")
