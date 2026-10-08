@@ -17,7 +17,7 @@ Se una run fallisce, il risultato precedente **non viene toccato**.
 |---|---|
 | Non fare niente | Niente: la pianificazione automatica è attiva (ogni 2 giorni, 07:00). |
 | Aggiornare adesso | Doppio click su **`AGGIORNA INVENTARIO.command`** (~25 min, lascia il Mac acceso). |
-| Installare o aggiornare tutto da GitHub | Una riga nel Terminale (vedi **Installazione e aggiornamento**). |
+| Installare o aggiornare tutto da GitHub | Una riga nel Terminale (vedi **Installazione e aggiornamento**), oppure il pulsante **⬆️ Aggiorna adesso** quando il pannello avvisa che c'è una versione nuova. |
 | Usare il pannello | Doppio click su **`AVVIA PANNELLO.command`** → si apre nel browser (vedi sotto). |
 | Aggiornare disponibilità, costi e prezzi su Shopify | Pannello → **📦 Aggiorna l'inventario**. |
 | Mettere su Shopify i prodotti di una newsletter MCWS | Pannello → **🆕 Crea prodotti dalle newsletter** (vedi sotto). |
@@ -32,7 +32,7 @@ Si apre su **"Cosa vuoi fare?"** con due scelte principali; ogni pagina è guida
 | 📦 **Aggiorna l'inventario** | **In automatico** (serve la chiave Shopify): niente file da caricare, legge i prodotti da Shopify, usa il listino MCWS scaricato (o ne scarica uno nuovo), premi **Controlla** e poi **Applica su Shopify**. Oppure **con i file**, come prima: carichi l'export e scarichi il file da importare. |
 | 🆕 **Crea prodotti dalle newsletter** | Scrivi il numero della newsletter (o scegli tutte le recenti), premi **Controlla** (non crea niente) e poi **Crea le bozze su Shopify**. Mostra l'elenco dei prodotti creati / da creare. |
 | 🔁 **Catalogo fornitori** | L'ultimo catalogo carmodel + MCWS da scaricare, **Aggiorna adesso** con l'avanzamento passo per passo, l'interruttore dell'aggiornamento automatico. |
-| ⚙️ **Impostazioni** | Password MCWS e chiave Shopify (si scrivono lì, finiscono in `credenziali.env`), pulsanti per modificare marchi e ricarichi. |
+| ⚙️ **Impostazioni** | Password MCWS e chiave Shopify (si scrivono lì, finiscono in `credenziali.env`), pulsanti per modificare marchi e ricarichi, versione del programma con **Controlla adesso**. |
 
 Durante la run si apre una finestra di Chrome: è normale (serve a superare Cloudflare), **non chiuderla**.
 
@@ -48,7 +48,7 @@ Durante la run si apre una finestra di Chrome: è normale (serve a superare Clou
 | `logs/` | Un log per ogni run (`run_<data>.log`) | 🔍 solo se qualcosa va storto |
 | `dati/` | File intermedi e storico (ultimi 15 per tipo, pulizia automatica) | ❌ |
 | `pipeline/` | Il motore: scraper, downloader, merge, Shopify, `run.sh` | ❌ |
-| `pannello/` | Il codice del pannello (una pagina per file: `home_ui`, `inventario_ui` + `inventario_auto_ui`, `newsletter_ui`, `catalogo_ui`, `impostazioni_ui`) e `inventario_sync.py` (inventario automatico) | ❌ |
+| `pannello/` | Il codice del pannello (una pagina per file: `home_ui`, `inventario_ui` + `inventario_auto_ui`, `newsletter_ui`, `catalogo_ui`, `impostazioni_ui`), `inventario_sync.py` (inventario automatico) e `aggiornamenti.py` + `aggiornamenti_ui.py` (aggiornamento del programma) | ❌ |
 | `app.py`, `.streamlit/`, `requirements.txt`, `.venv/` | Avvio e aspetto del pannello, dipendenze Python | ❌ |
 | `Vroomi-Newsletter/` | Newsletter MCWS → bozze Shopify (vedi sotto): usato dal pannello e da Giuliano | ✅ |
 | `_archivio/` | Roba vecchia, non usata. Si può cancellare. | ❌ |
@@ -85,12 +85,16 @@ Due modi di usarlo, stesso programma:
 
 La scheda creata è come quelle già in negozio: titolo `MARCA AUTO - DESCRIZIONE`, SKU = codice
 produttore, barcode = ID MCWS, costo = prezzo netto, prezzo = costo × ricarico (sotto 10 € ×2,2,
-sotto 20 € ×1,9) arrotondato a ,90, foto grande, materiale e note dalla scheda MCWS, campi
+sotto 20 € ×1,9, come l'inventario) arrotondato a ,90, foto grande, materiale e note dalla scheda MCWS, campi
 `custom.*` (per i modelli da corsa anche evento, pilota e sottocategoria). I prodotti già presenti
 (stesso SKU o barcode) vengono saltati: rilanciare è sicuro.
 
 ⚠️ Un marchio **senza ricarico** in `config/Vroomi_Markup.txt` viene saltato (es. MR-MODELS):
 aggiungi la riga del ricarico e rilancia.
+
+⏸️ La fascia **`COSTO SOTTO 50  2,30`** (ricarico ×2,30 per i costi sotto 50 €, solo newsletter) è
+**disattivata** da ottobre 2026: in `config/Vroomi_Markup.txt` (e nella copia di `Vroomi-Newsletter/`)
+la riga c'è ancora ma con `# ` davanti, quindi non viene letta. Per riattivarla togli il `# `.
 
 Dentro questo progetto usa `config/` e `credenziali.env` della cartella principale. Per dare lo
 strumento a Giuliano basta zippare **solo** la cartella `Vroomi-Newsletter/`, senza `.venv/` e `output/` (ha le sue
@@ -127,6 +131,18 @@ Serve **Google Chrome** e **Python 3.10 o più recente** (https://www.python.org
 **Per aggiornare** rilancia la stessa riga: vengono sostituiti solo i file del programma; password,
 `dati/`, `RISULTATO/`, `logs/` e l'ambiente Python restano. Per usare un'altra cartella:
 `… | bash -s -- "$HOME/Desktop/Vroomi"`.
+
+**Oppure dal pannello (aggiornamento automatico):** una volta al giorno il pannello chiede a GitHub
+se c'è una versione nuova (l'ultima del ramo `main`, la stessa che scarica la riga qui sopra). Se
+c'è, in cima a ogni pagina compare **🆕 È disponibile un aggiornamento** con l'elenco di cosa cambia.
+Premi **⬆️ Aggiorna adesso**: rilancia `installa.sh` su questa cartella, reinstalla le dipendenze se
+sono cambiate, chiude il pannello (e la sua finestra del Terminale) e lo riapre in una nuova scheda
+del browser — la scheda vecchia si può chiudere. Il pulsante è spento mentre gira il catalogo, una
+newsletter o l'inventario. Se l'installazione non riesce il pannello resta com'era e mostra l'errore
+(registro in `logs/aggiornamento_<data>.log`). La versione installata è nel file `.versione` (scritto
+da `installa.sh`; le copie installate prima di questa funzione non l'hanno, quindi il pannello propone
+subito un aggiornamento). Le copie scaricate con `git` non vengono toccate: si aggiornano con `git pull`.
+Da Terminale: `.venv/bin/python -m pannello.aggiornamenti` (controlla adesso).
 
 Perché niente blocchi: macOS mette in "quarantena" solo i file scaricati da browser, Drive, WhatsApp o
 mail; quelli scaricati dal Terminale si aprono subito. Se hai comunque una copia scaricata a mano e

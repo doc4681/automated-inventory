@@ -12,6 +12,9 @@ credenziali.env
 # GitHub Actions (non usiamo CI — tutto gira in locale)
 .github/
 
+# Versione installata (scritta da installa.sh, letta dal pannello per gli aggiornamenti)
+.versione
+
 # macOS
 .DS_Store
 

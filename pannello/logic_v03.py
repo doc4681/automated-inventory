@@ -168,7 +168,7 @@ def load_markup_rules(markup_file_content):
                 break
         if header_idx >= 0:
             for line in lines[header_idx + 1:]:
-                if not line.strip():
+                if not line.strip() or line.lstrip().startswith('#'):  # righe commentate
                     continue
                 parts = line.replace('\t', ' ').split()
                 if len(parts) >= 2:
