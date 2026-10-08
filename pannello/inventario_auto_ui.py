@@ -168,7 +168,8 @@ def _result(log: Path) -> None:
         st.warning("⚠️ Non sono riuscito a scaricare un listino MCWS nuovo: ho usato l'ultimo già "
                    "scaricato.")
     sources = [f"Listino MCWS: {s['mcws_line']}" if s["mcws_line"] else "",
-               f"Giacenze BBR: {s['bbr_line']}" if s["bbr_line"] else ""]
+               f"Giacenze BBR: {s['bbr_line']}" if s["bbr_line"] else "",
+               f"Etichette: {s['labels_line']}" if s["labels_line"] else ""]
     if any(sources):
         st.caption(" · ".join(x for x in sources if x))
 
@@ -192,6 +193,11 @@ def _result(log: Path) -> None:
         st.caption(f"📍 {num(s['moved'])} prodotti hanno merce in un'altra sede di magazzino: "
                    "applicando, la quantità viene spostata tutta su **Vroomi Models** "
                    "(il totale non cambia).")
+
+    if s["not_available"]:
+        with st.expander(f"⏭️ {num(len(s['not_available']))} prodotti saltati perché sul sito "
+                         "non sono «Disponibile» (etichetta azzurra): non vengono toccati"):
+            st.text("\n".join(s["not_available"]))
 
     if s["too_many"]:
         st.warning(f"⚠️ **{num(s['out'])} prodotti** su {num(s['available'])} disponibili "

@@ -94,6 +94,32 @@ sotto 20 € ×1,9, come l'inventario) arrotondato a ,90, foto grande, materiale
 ⚠️ Un marchio **senza ricarico** in `config/Vroomi_Markup.txt` viene saltato (es. MR-MODELS):
 aggiungi la riga del ricarico e rilancia.
 
+## 🏷️ Etichetta di disponibilità: «Disponibile» sì, le altre no (newsletter e inventario)
+
+Sul sito ogni prodotto ha un'etichetta colorata. **«Disponibile»** (scritta bianca su **verde**):
+il prodotto si processa normalmente. **Qualsiasi altra etichetta** (scritta bianca su **azzurro**,
+es. «Dal 17 Nov», «In arrivo», «Preordine»): il prodotto **si salta**.
+
+- **Newsletter**: i prodotti con l'etichetta azzurra non diventano bozze. Nel registro sono
+  `[SALTATO — NON DISPONIBILE] sku=… etichetta «…» (azzurra)` e nel riepilogo finale
+  «Saltati perché NON DISPONIBILI», con l'elenco; nel report CSV hanno stato `SALTATO: NON DISPONIBILE`.
+- **Inventario**: i prodotti del listino MCWS con l'etichetta azzurra **non vengono toccati**
+  (né quantità né costo, prezzo o tag). Il listino CSV di MCWS non ha l'etichetta: la prende dall'ultimo
+  **catalogo fornitori** (carmodel.com, stesso sito di MCWS, colonna `disponibilita` in
+  `dati/carmodel/`). Nel registro: riga «Etichette di disponibilità: …» e l'elenco
+  «Saltati perché NON DISPONIBILI». **Dopo l'aggiornamento del programma va rifatto il catalogo
+  fornitori una volta** (i cataloghi vecchi non hanno l'etichetta: in quel caso non si salta niente
+  e il registro lo dice).
+- L'etichetta si riconosce dal **colore** calcolato da Chrome (`Vroomi-Newsletter/etichette.py`), non
+  dai nomi delle classi del sito. Se su un prodotto non si trova, quel prodotto si processa come
+  prima e il registro lo segnala («etichetta non trovata»).
+- **Verifica** (apre Chrome, non scrive niente su Shopify):
+  `.venv/bin/python pipeline/verifica_etichette.py` — controlla la newsletter 15568 (4100643 →
+  processato, 41006444 → saltato) e il marchio GP-REPLICAS (GP184A → processato, GP12-48A →
+  saltato), elenca l'etichetta letta per ogni prodotto e chiude con «VERIFICA SUPERATA» o con gli
+  errori. Registro in `logs/verifica_etichette_<data>.log`. Altri casi: `--newsletter`, `--nl-ok`,
+  `--nl-no`, `--marchio`, `--inv-ok`, `--inv-no`.
+
 ⏸️ La fascia **`COSTO SOTTO 50  2,30`** (ricarico ×2,30 per i costi sotto 50 €, solo newsletter) è
 **disattivata** da ottobre 2026: in `config/Vroomi_Markup.txt` (e nella copia di `Vroomi-Newsletter/`)
 la riga c'è ancora ma con `# ` davanti, quindi non viene letta. Per riattivarla togli il `# `.

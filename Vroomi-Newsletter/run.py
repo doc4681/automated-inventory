@@ -8,6 +8,7 @@ Flusso:
   3) tiene solo le newsletter il cui brand e' in Valid_Trademarks.txt e ha un markup
   4) apre ogni newsletter, fa scrape dei prodotti (+ pagina di dettaglio:
      materiale e nota -> metafield custom.material / custom.notes)
+     e SALTA quelli con l'etichetta non «Disponibile» (azzurra invece di verde)
   5) prezzo Vroomi = costo (prezzo netto) * markup, arrotondato a .90
   6) dedup per SKU: salta i prodotti gia' presenti su Shopify
   7) crea la scheda in stato DRAFT (con --apply; altrimenti DRY-RUN)
@@ -33,6 +34,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+import etichette
 import session
 import scraper
 import catalog
@@ -296,6 +298,8 @@ def main() -> int:
     skipped_brands: list[tuple[str, str]] = []
     created = existing = no_price = no_markup = errors = 0
     processed = 0
+    not_available: list[str] = []   # saltati: etichetta azzurra (non «Disponibile»)
+    no_label: list[str] = []        # etichetta non trovata: processati come prima
 
     try:
         home = bs.get_soup(f"{session.BASE_URL}/it")
@@ -354,10 +358,30 @@ def main() -> int:
                 continue
             prods = scraper.parse_newsletter(soup)
             print(f"\n== {n.brand or 'newsletter'} ({n.id}): {len(prods)} prodotti ==")
+            if prods and all(p.disponibilita == etichette.SCONOSCIUTA for p in prods):
+                print("  [ATTENZIONE] nessuna etichetta di disponibilità trovata in questa "
+                      "newsletter: il sito potrebbe essere cambiato. Processo tutti i prodotti.")
 
             for p in prods:
                 if args.limit and processed >= args.limit:
                     break
+                if p.disponibilita == etichette.NON_DISPONIBILE:
+                    # Etichetta azzurra (non «Disponibile»): il prodotto si salta.
+                    riga = (f"sku={p.sku}  etichetta {etichette.descrivi(p.disponibilita, p.etichetta)}"
+                            f"  — {p.brand_auto} {p.description}  (newsletter {n.id})")
+                    not_available.append(riga)
+                    print(f"  [SALTATO — NON DISPONIBILE] {riga}")
+                    report.append({**dict.fromkeys(REPORT_FIELDS, ""),
+                                   "newsletter_id": n.id, "brand": n.brand,
+                                   "status": "SALTATO: NON DISPONIBILE",
+                                   "etichetta": p.etichetta, "site_id": p.site_id, "sku": p.sku,
+                                   "title": f"{p.brand_auto} - {p.description}",
+                                   "scale": p.scale, "cost": p.cost,
+                                   "image_url": p.image_url, "detail_url": p.detail_url})
+                    continue
+                if p.disponibilita == etichette.SCONOSCIUTA:
+                    no_label.append(f"sku={p.sku} (newsletter {n.id})")
+                    print(f"  [etichetta non trovata: processo come prima] sku={p.sku}")
                 if not p.cost:
                     no_price += 1
                     continue
@@ -412,11 +436,12 @@ def main() -> int:
 
                 print(f"  [{status}] {payload['title'][:70]}")
                 print(f"      sku={p.sku} costo={p.cost} x{payload['_markup']} -> €{payload['price']}"
-                      f"  {admin_url}")
+                      f"  etichetta {etichette.descrivi(p.disponibilita, p.etichetta)}  {admin_url}")
 
                 row = {
                     "newsletter_id": n.id, "brand": n.brand, "status": status,
-                    "site_id": p.site_id, "sku": p.sku, "title": payload["title"],
+                    "etichetta": p.etichetta, "site_id": p.site_id, "sku": p.sku,
+                    "title": payload["title"],
                     "vendor": payload["vendor"], "scale": p.scale,
                     "car_model": payload["_car_model"], "year": payload["_year"],
                     "cost": p.cost, "markup": payload["_markup"], "price": payload["price"],
@@ -433,17 +458,24 @@ def main() -> int:
 
     return _finish(report, processed=processed, created=created, existing=existing,
                    errors=errors, no_price=no_price, no_markup=no_markup, apply=args.apply,
-                   pending=pending)
+                   pending=pending, not_available=not_available, no_label=no_label)
+
+
+# Colonne del report (i prodotti saltati per l'etichetta hanno le stesse, in parte vuote)
+REPORT_FIELDS = ["newsletter_id", "brand", "status", "etichetta", "site_id", "sku", "title",
+                 "vendor", "scale", "car_model", "year", "cost", "markup", "price",
+                 "material", "note", "image_url", "detail_url", "admin_url"]
 
 
 def _finish(report: list, processed: int, created: int, existing: int, errors: int,
-            no_price: int, no_markup: int, apply: bool, pending: list | None = None) -> int:
+            no_price: int, no_markup: int, apply: bool, pending: list | None = None,
+            not_available: list | None = None, no_label: list | None = None) -> int:
     """Scrive il report e il riepilogo finale (le righe che legge il pannello)."""
     ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     rep = OUT / f"report_{ts}.csv"
     if report:
         with open(rep, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=list(report[0].keys()))
+            w = csv.DictWriter(f, fieldnames=REPORT_FIELDS, extrasaction="ignore")
             w.writeheader()
             w.writerows(report)
     if pending and not apply:
@@ -462,6 +494,14 @@ def _finish(report: list, processed: int, created: int, existing: int, errors: i
     print(f"Prodotti senza prezzo (saltati): {no_price}")
     if no_markup:
         print(f"Prodotti di brand non validi / senza markup (saltati): {no_markup}")
+    print(f"Saltati perché NON DISPONIBILI (etichetta azzurra, non «Disponibile»): "
+          f"{len(not_available or [])}")
+    for r in not_available or []:
+        print(f"  - {r}")
+    if no_label:
+        print(f"Etichetta di disponibilità non trovata (processati come prima): {len(no_label)}")
+        for r in no_label[:30]:
+            print(f"  - {r}")
     if errors:
         print(f"ERRORI in creazione su Shopify: {errors} (dettaglio nel report)")
     if report:

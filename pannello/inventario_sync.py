@@ -6,7 +6,10 @@ inventario_sync.py — "Aggiorna l'inventario" in automatico, senza caricare fil
   2. listino MCWS: l'ultimo scaricato dal catalogo automatico (dati/mcws/),
      oppure ne scarica uno nuovo adesso (--mcws-nuovo, si apre Chrome)
   3. giacenze BBR: l'ultimo file caricato nel pannello (dati/bbr/), facoltativo
-  4. calcola le modifiche con la stessa logica di sempre (logic_v03.py)
+  4. calcola le modifiche con la stessa logica di sempre (logic_v03.py); i prodotti MCWS
+     con l'etichetta non «Disponibile» (scritta bianca su azzurro invece che su verde)
+     si saltano e si elencano nel log. L'etichetta viene dall'ultimo catalogo carmodel
+     (dati/carmodel/, colonna «disponibilita», la salva pipeline/carmodel_scraper.py)
   5. con --apply le scrive su Shopify: quantità, costo, prezzo, prezzo barrato, tag SALE
      (con --solo-disponibilita solo la quantità; con --solo-prezzi niente listini, solo i prezzi)
 
@@ -28,6 +31,7 @@ Uso (dalla cartella principale):
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 import subprocess
 import sys
@@ -42,13 +46,14 @@ sys.path.insert(0, str(REPO / "Vroomi-Newsletter"))   # client Shopify condiviso
 
 from pannello.logic_v03 import (  # noqa: E402
     COL_CHANGE_LOG, COL_COMPARE, COL_COST, COL_PRICE, COL_QTY, COL_SKU, COL_TAGS,
-    clean_currency, clean_qty, process_availability_only, process_inventory_v03,
-    process_markup_only,
+    LABEL_NOT_AVAILABLE, clean_currency, clean_qty, match_key, normalize_string,
+    process_availability_only, process_inventory_v03, process_markup_only,
 )
 from shopify import LOCATION_NAME, Shopify, _load_env  # noqa: E402
 
 DATA_DIR = REPO / "dati"
 MCWS_DIR = DATA_DIR / "mcws"
+CARMODEL_DIR = DATA_DIR / "carmodel"     # etichette di disponibilità (catalogo carmodel)
 BBR_DIR = DATA_DIR / "bbr"
 REPORT_DIR = DATA_DIR / "inventario"
 REJECTED_DIR = DATA_DIR / "scartati"
@@ -60,6 +65,7 @@ MIN_MCWS_ROWS = 1000        # come pipeline/run.sh
 MAX_DROP_PCT = 50           # listino nuovo con meno della metà delle righe del precedente = sospetto
 MAX_OUT_OF_STOCK_PCT = 30   # oltre questa quota di disponibili che diventano esauriti, --apply si ferma
 MIN_OUT_OF_STOCK_BLOCK = 20
+LABELS_OLD_DAYS = 4         # etichette più vecchie di così: avviso nel log
 KEEP_REPORTS = 15
 
 # Colonne del "Products.csv" ricostruito da Shopify (+ ID interni, che iniziano con _).
@@ -158,6 +164,67 @@ def resolve_mcws(arg: str | None, fresh: bool) -> Path:
     return found
 
 
+# ─────────────────────────── Etichette di disponibilità ──────────────────────
+class Labels:
+    """Etichetta di disponibilità di ogni prodotto, dall'ultimo catalogo carmodel
+    (stesso sito di MCWS): «Disponibile» verde → normale, azzurra → da saltare."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path
+        self.by_brand: dict = {}       # (marchio normalizzato, codice) -> (stato, testo)
+        self.by_code: dict = {}        # codice -> (stato, testo), solo se il codice è di un marchio
+        self.count = {"disponibile": 0, LABEL_NOT_AVAILABLE: 0, "": 0}
+        self.has_column = False
+        if path is None:
+            return
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            self.has_column = "disponibilita" in (reader.fieldnames or [])
+            if not self.has_column:
+                return
+            seen_brands: dict = {}
+            for r in reader:
+                code = match_key((r.get("codice_produttore") or "").strip())
+                if not code:
+                    continue
+                label = ((r.get("disponibilita") or "").strip(), (r.get("etichetta") or "").strip())
+                self.count[label[0]] = self.count.get(label[0], 0) + 1
+                brand = normalize_string(r.get("trademark") or "")
+                self.by_brand[(brand, code)] = label
+                seen_brands.setdefault(code, set()).add(brand)
+                self.by_code[code] = label
+            for code, brands in seen_brands.items():
+                if len(brands) > 1:             # stesso codice in più marchi: solo per marchio
+                    self.by_code.pop(code, None)
+
+    def __call__(self, brand: str, code_key: str):
+        return (self.by_brand.get((normalize_string(brand), code_key))
+                or self.by_code.get(code_key))
+
+
+def load_labels() -> Labels:
+    found = latest(CARMODEL_DIR, "carmodel_scraped_*.csv")
+    if not found:
+        log("  ⚠️ Etichette di disponibilità: nessun catalogo carmodel scaricato, non posso "
+            "riconoscere i prodotti non disponibili (nessuno viene saltato). "
+            "Aggiorna il catalogo fornitori.")
+        return Labels()
+    labels = Labels(found)
+    if not labels.has_column:
+        log(f"  ⚠️ Etichette di disponibilità: il catalogo {found.name} è stato scaricato "
+            "con una versione vecchia del programma e non le contiene (nessun prodotto "
+            "viene saltato). Aggiorna il catalogo fornitori.")
+        return labels
+    log(f"File etichette usato: {found}")
+    log(f"  Etichette di disponibilità: {labels.count.get('disponibile', 0)} «Disponibile» (verde), "
+        f"{labels.count.get(LABEL_NOT_AVAILABLE, 0)} non disponibili (azzurra), "
+        f"{labels.count.get('', 0)} senza etichetta — {_age(found)}")
+    days = (datetime.now() - datetime.fromtimestamp(found.stat().st_mtime)).days
+    if days > LABELS_OLD_DAYS:
+        log(f"  ⚠️ Le etichette hanno {days} giorni: aggiorna il catalogo fornitori per averle fresche.")
+    return labels
+
+
 # ─────────────────────────── Prodotti da Shopify ─────────────────────────────
 VARIANTS_QUERY = """
 query($cursor: String, $loc: ID!) {
@@ -240,19 +307,27 @@ def diff_row(old: pd.Series, new: pd.Series) -> dict:
 
 def compute(df_shop: pd.DataFrame, prices_only: bool, df_mcws: pd.DataFrame,
             df_bbr: pd.DataFrame, use_bbr: bool,
-            qty_only: bool = False) -> tuple[pd.DataFrame, list, list]:
-    """Ritorna (righe nuove, modifiche per riga, log). Le righe restano nello stesso ordine.
-    qty_only: solo la disponibilità (costi, prezzi e tag restano quelli di Shopify)."""
+            qty_only: bool = False, labels=None) -> tuple[pd.DataFrame, list, list, list]:
+    """Ritorna (righe nuove, modifiche per riga, log, saltati per l'etichetta).
+    Le righe restano nello stesso ordine.
+    qty_only: solo la disponibilità (costi, prezzi e tag restano quelli di Shopify).
+    labels: etichette di disponibilità (Labels); i prodotti MCWS non «Disponibile» non si toccano."""
+    skipped: list = []
     with open(MARKUP_FILE, encoding="utf-8") as f_mk, open(TRADEMARKS_FILE, encoding="utf-8") as f_tm:
         if prices_only:
             new, _stats, logs = process_markup_only(df_shop, f_mk, f_tm)
         else:
             process = process_availability_only if qty_only else process_inventory_v03
-            new, _stats, _dup, logs = process(
+            new, stats, _dup, logs = process(
                 df_shop, df_mcws, df_bbr, f_mk, f_tm, include_change_log=True,
-                only_changes=False, enable_bbr=use_bbr)
+                only_changes=False, enable_bbr=use_bbr, label_for=labels)
+            skipped = stats.get("skipped_unavailable", [])
+    untouched = {s["index"] for s in skipped}
     changes = []
     for idx in df_shop.index:
+        if idx in untouched:            # etichetta non «Disponibile»: niente, nemmeno lo spostamento
+            changes.append({})
+            continue
         ch = diff_row(df_shop.loc[idx], new.loc[idx])
         if "qty" in ch and not df_shop.at[idx, "_tracked"]:
             ch.pop("qty")           # magazzino non tracciato su Shopify: la quantità non conta
@@ -264,7 +339,7 @@ def compute(df_shop: pd.DataFrame, prices_only: bool, df_mcws: pd.DataFrame,
             new.at[idx, COL_CHANGE_LOG] = " | ".join(
                 x for x in (old, f"LOC: {ch['move']} da altre sedi -> {LOCATION_NAME}") if x)
         changes.append(ch)
-    return new, changes, logs
+    return new, changes, logs, skipped
 
 
 # ─────────────────────────── Scrittura su Shopify ────────────────────────────
@@ -489,6 +564,7 @@ def main() -> int:
 
     df_mcws = df_bbr = pd.DataFrame()
     use_bbr = False
+    labels = None
     if not args.solo_prezzi:
         log("▶ [1/4] Listini dei fornitori")
         mcws = resolve_mcws(args.mcws, args.mcws_nuovo)
@@ -509,6 +585,7 @@ def main() -> int:
             log(f"  Giacenze BBR: {len(df_bbr)} righe, {_age(bbr)}")
         else:
             log("  Giacenze BBR: non considerate")
+        labels = load_labels()
 
     log("▶ [2/4] Leggo i prodotti dal negozio Shopify")
     sh = Shopify.from_env()
@@ -518,8 +595,8 @@ def main() -> int:
         raise SystemExit("ERRORE: Shopify non ha restituito nessun prodotto.")
 
     log("▶ [3/4] Confronto con i listini e i ricarichi")
-    new, changes, logic_log = compute(df_shop, args.solo_prezzi, df_mcws, df_bbr, use_bbr,
-                                      qty_only=args.solo_disponibilita)
+    new, changes, logic_log, skipped = compute(df_shop, args.solo_prezzi, df_mcws, df_bbr, use_bbr,
+                                               qty_only=args.solo_disponibilita, labels=labels)
     for m in logic_log:
         if not str(m).startswith("[CHECK"):
             log(f"  {m}")
@@ -535,6 +612,11 @@ def main() -> int:
     log(f"  costi cambiati: {n('cost')}")
     log(f"  spostati su {LOCATION_NAME}: {n('move')}")
     log(f"  disponibili ora nel negozio: {available}")
+    if not args.solo_prezzi:
+        log(f"Saltati perché NON DISPONIBILI (etichetta azzurra, non «Disponibile»): {len(skipped)}")
+        for sk in skipped:
+            log(f"  - SKU {sk['sku']}  [{sk['brand']}]  etichetta «{sk['label'] or '?'}» (azzurra)"
+                f"  — {sk['title']}  → non toccato")
 
     too_many = out_of_stock > max(MIN_OUT_OF_STOCK_BLOCK, available * MAX_OUT_OF_STOCK_PCT / 100)
     if too_many:

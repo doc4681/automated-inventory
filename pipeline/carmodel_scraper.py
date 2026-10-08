@@ -12,6 +12,7 @@ from __future__ import annotations  # compatibilità Python 3.9 (sintassi "X | N
 
 import os
 import re
+import sys
 import time
 import csv
 import argparse
@@ -22,6 +23,11 @@ from bs4 import BeautifulSoup
 
 from chrome import new_chrome
 from paths import CARMODEL_DIR, TRADEMARKS_FILE, output_file
+
+# Etichetta di disponibilità (verde «Disponibile» / azzurra): modulo condiviso con la
+# newsletter (in coda al path: chrome.py e paths.py restano quelli di pipeline/).
+sys.path.append(str(Path(__file__).resolve().parent.parent / "Vroomi-Newsletter"))
+import etichette  # noqa: E402
 
 BASE_URL = "https://www.carmodel.com"
 SLEEP = 2
@@ -40,6 +46,8 @@ FIELDNAMES = [
     "note",
     "url_prodotto",
     "immagini_url",
+    "etichetta",       # testo dell'etichetta sulla card (es. 'Disponibile', 'Dal 17 Lug')
+    "disponibilita",   # 'disponibile' (verde) / 'non disponibile' (azzurra) / '' non trovata
 ]
 
 
@@ -106,6 +114,8 @@ def get_page_soup(driver: uc.Chrome, url: str) -> BeautifulSoup | None:
     else:
         print(f"  WARNING: CF challenge non risolto per {url}")
         return None
+    # colori delle etichette di disponibilità calcolati da Chrome (vedi etichette.py)
+    etichette.annota(driver)
     return BeautifulSoup(driver.page_source, "html.parser")
 
 
@@ -159,6 +169,8 @@ def parse_card(card: BeautifulSoup, trademark: str) -> dict | None:
     imgs = [img["src"] for img in card.find_all("img", class_="product-img", src=True)]
     immagini_url = "|".join(imgs)
 
+    disponibilita, etichetta = etichette.leggi(card)
+
     return {
         "codice_produttore": codice_produttore,
         "carmodel_id": carmodel_id,
@@ -172,6 +184,8 @@ def parse_card(card: BeautifulSoup, trademark: str) -> dict | None:
         "note": note,
         "url_prodotto": href,
         "immagini_url": immagini_url,
+        "etichetta": etichetta,
+        "disponibilita": disponibilita,
     }
 
 
@@ -240,7 +254,10 @@ def scrape_trademark(driver: uc.Chrome, trademark: str) -> list[dict]:
 
         page_prods = [p for c in cards if (p := parse_card(c, trademark))]
         products.extend(page_prods)
-        print(f"    page {page}/{total_pages}: {len(page_prods)} products (cumulative: {len(products)})")
+        n_off = sum(1 for p in page_prods if p["disponibilita"] == etichette.NON_DISPONIBILE)
+        n_none = sum(1 for p in page_prods if p["disponibilita"] == etichette.SCONOSCIUTA)
+        print(f"    page {page}/{total_pages}: {len(page_prods)} products (cumulative: {len(products)})"
+              f"  [etichetta azzurra: {n_off}, senza etichetta: {n_none}]")
 
     return products
 
@@ -301,6 +318,11 @@ def main():
         writer.writerows(all_products)
 
     print(f"\nDone. {len(all_products)} products → {out_file}")
+    conta = {k: sum(1 for p in all_products if p["disponibilita"] == k)
+             for k in (etichette.DISPONIBILE, etichette.NON_DISPONIBILE, etichette.SCONOSCIUTA)}
+    print(f"Etichette: {conta[etichette.DISPONIBILE]} «Disponibile» (verde), "
+          f"{conta[etichette.NON_DISPONIBILE]} non disponibili (azzurra), "
+          f"{conta[etichette.SCONOSCIUTA]} senza etichetta")
 
     if BRAND_FAILURES or PAGE_FAILURES:
         print("\n" + "!" * 60)

@@ -92,6 +92,11 @@ USO NORMALE
 In tutti i casi le schede con SKU già presente vengono saltate: puoi
 rilanciare quando vuoi senza creare doppioni.
 
+Vengono saltati anche i prodotti che sul sito NON hanno l'etichetta verde
+« Disponibile » (es. « Dal 17 Nov », « In arrivo »: scritta bianca su
+azzurro). Nel registro: [SALTATO — NON DISPONIBILE] e, alla fine, l'elenco
+« Saltati perché NON DISPONIBILI ».
+
 Mentre gira si apre una finestra di CHROME: non chiuderla finché non finisce.
 Se Chrome si blocca, il programma riparte da solo con una sessione nuova.
 

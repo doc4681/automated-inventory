@@ -12,7 +12,8 @@ login_any() prova anche le altre salvate sul Mac (vedi credential_candidates).
 API:
     drv = make_driver(headless=False)
     login_any(drv)                   # come login(), provando tutte le credenziali salvate
-    soup = get_soup(drv, url)        # BeautifulSoup della pagina (attende Cloudflare)
+    soup = get_soup(drv, url)        # BeautifulSoup della pagina (attende Cloudflare,
+                                     # card annotate con l'etichetta: etichette.py)
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from pathlib import Path
 import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
 
+import etichette
 from chrome import new_chrome
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import (
@@ -217,6 +219,9 @@ def get_soup(driver: uc.Chrome, url: str) -> BeautifulSoup | None:
         print(f"  ERRORE navigazione ({type(e).__name__}): {url}", flush=True)
         return None
     _wait_cloudflare(driver)
+    # Colori delle etichette di disponibilità (verde = disponibile, azzurra = no):
+    # li calcola Chrome e restano sulle card come attributi (vedi etichette.py).
+    etichette.annota(driver)
     return BeautifulSoup(driver.page_source, "html.parser")
 
 

@@ -100,6 +100,17 @@ def _valid_trademarks() -> list:
 
 
 # ─────────────────────────── Elaborazione ────────────────────────────────────
+def _labels():
+    """Etichette di disponibilità dall'ultimo catalogo carmodel (solo sul Mac): i prodotti
+    MCWS non «Disponibile» (etichetta azzurra) si saltano, come nel modo automatico."""
+    if not IS_MAC:
+        return None
+    from pannello.inventario_sync import CARMODEL_DIR, Labels, latest
+    found = latest(CARMODEL_DIR, "carmodel_scraped_*.csv")
+    labels = Labels(found) if found else None
+    return labels if labels is not None and labels.has_column else None
+
+
 def _process(mode, file_shop, src_mcws, file_bbr, use_bbr, only_changes, include_log) -> dict:
     df_shop = load_dataframe(file_shop)
     duplicates = []
@@ -117,7 +128,11 @@ def _process(mode, file_shop, src_mcws, file_bbr, use_bbr, only_changes, include
             with open(MARKUP_FILE, encoding="utf-8") as f_mk:
                 df, stats, duplicates, log = process(
                     df_shop, df_mcws, df_bbr, f_mk, f_tm, include_change_log=include_log,
-                    only_changes=only_changes, enable_bbr=use_bbr)
+                    only_changes=only_changes, enable_bbr=use_bbr, label_for=_labels())
+            if not only_changes and stats.get("skipped_unavailable"):
+                # anche con «tutte le righe» i saltati non vanno nel file da importare
+                df = df.drop(index=[sk["index"] for sk in stats["skipped_unavailable"]],
+                             errors="ignore")
             prefix = OUTPUT_PREFIX_V03 if mode == FULL else "AVAILABILITY_UPDATE"
         else:
             with open(MARKUP_FILE, encoding="utf-8") as f_mk:
@@ -170,6 +185,13 @@ def _show_result(r: dict) -> None:
 
 
 def _details(r: dict) -> None:
+    skipped = (r["stats"] or {}).get("skipped_unavailable") if isinstance(r["stats"], dict) else None
+    if skipped:
+        st.warning(f"⏭️ **{num(len(skipped))} prodotti saltati** perché sul sito l'etichetta non è "
+                   "«Disponibile» (scritta bianca su azzurro): non sono nel file.")
+        st.dataframe(pd.DataFrame([{"SKU": sk["sku"], "Marchio": sk["brand"],
+                                    "Etichetta": sk["label"], "Prodotto": sk["title"]}
+                                   for sk in skipped]), use_container_width=True)
     if r["duplicates"]:
         st.warning("⚠️ Nel listino del fornitore alcuni codici compaiono più volte. "
                    "Controlla questi prodotti:")

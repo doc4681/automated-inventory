@@ -8,6 +8,8 @@ Versione DEFINITIVA (Con Supporto enable_bbr + Markup Fasce Costo):
    - Altrimenti: Markup da Brand (File TXT)
 3. PRE-ORDER: Qta bloccata se tag presente.
 4. SAFETY CHECK: Prezzo >= CompareAt pulisce SALE.
+5. ETICHETTA MCWS: con label_for, i prodotti MCWS con l'etichetta non «Disponibile»
+   (azzurra invece di verde) si saltano: niente quantità, costo, prezzo né tag.
 FIX pandas 3.x: usa dtype=object e str() per evitare Arrow dtype errors.
 """
 
@@ -62,6 +64,10 @@ COL_MCWS_BRAND = 'Trademark'
 
 COL_BRAND = 'Trademark'
 COL_MCWS_EAN = 'EAN'
+
+# Stato dell'etichetta che fa saltare il prodotto (= etichette.NON_DISPONIBILE,
+# Vroomi-Newsletter/etichette.py): scritta bianca su azzurro invece di «Disponibile».
+LABEL_NOT_AVAILABLE = 'non disponibile'
 
 # ==========================================
 # FUNZIONI DI UTILITÀ
@@ -262,7 +268,11 @@ def calculate_target_price_and_markup(cost, tags, supplier_brand, markup_rules, 
 # LOGICA PRINCIPALE (V03 - SYNC INVENTORY)
 # ==========================================
 def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file,
-                          include_change_log=True, only_changes=True, enable_bbr=True):
+                          include_change_log=True, only_changes=True, enable_bbr=True,
+                          label_for=None):
+    """label_for(trademark MCWS, chiave SKU) -> (stato, testo) o None: l'etichetta di
+    disponibilità del prodotto. I prodotti MCWS con stato LABEL_NOT_AVAILABLE vengono
+    saltati (riga lasciata com'è) ed elencati in stats['skipped_unavailable']."""
 
     markup_rules = load_markup_rules(markup_file)
     valid_trademarks_normalized = load_trademarks(valid_trademarks_file)
@@ -307,7 +317,8 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
     stats = {
         'processed': 0, 'updated_qty': 0, 'updated_cost': 0,
         'updated_price': 0, 'errors': 0,
-        'inventory': {'total': 0, 'updates_1': 0, 'updates_0': 0}
+        'inventory': {'total': 0, 'updates_1': 0, 'updates_0': 0},
+        'skipped_unavailable': [],
     }
 
     # FIX pandas 3.x: converti in object dtype per evitare Arrow strict typing
@@ -378,6 +389,13 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
                 if match_obj:
                     mcws_brand = match_obj['brand']
                     if check_brand_compatibility(tags, mcws_brand):
+                        label = label_for(mcws_brand, sku_key) if label_for else None
+                        if label and label[0] == LABEL_NOT_AVAILABLE:
+                            # Etichetta non «Disponibile»: il prodotto non si tocca.
+                            stats['skipped_unavailable'].append(
+                                {'index': index, 'sku': sku, 'brand': mcws_brand,
+                                 'label': label[1], 'title': str(row.get('Title', '') or '')})
+                            continue
                         found_supplier = True
                         supplier_brand = mcws_brand
                         s_cost = match_obj['cost']
@@ -461,12 +479,15 @@ def process_inventory_v03(df_shopify, df_mcws, df_bbr, markup_file, valid_tradem
 # FUNZIONE: SOLO DISPONIBILITÀ
 # ==========================================
 def process_availability_only(df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file,
-                              include_change_log=True, only_changes=True, enable_bbr=True):
-    """Come process_inventory_v03 (stesse regole: BBR, MCWS, PRE-ORDER mai toccati) ma
-    cambia SOLO la quantità: costo, prezzo, prezzo barrato e tag restano quelli di Shopify."""
+                              include_change_log=True, only_changes=True, enable_bbr=True,
+                              label_for=None):
+    """Come process_inventory_v03 (stesse regole: BBR, MCWS, PRE-ORDER mai toccati,
+    etichetta non «Disponibile» saltata) ma cambia SOLO la quantità: costo, prezzo,
+    prezzo barrato e tag restano quelli di Shopify."""
     full_df, stats, duplicates, logs = process_inventory_v03(
         df_shopify, df_mcws, df_bbr, markup_file, valid_trademarks_file,
-        include_change_log=True, only_changes=False, enable_bbr=enable_bbr)
+        include_change_log=True, only_changes=False, enable_bbr=enable_bbr,
+        label_for=label_for)
     output_df = full_df.copy()
     for col in (COL_COST, COL_PRICE, COL_COMPARE, COL_TAGS):
         original = df_shopify[col] if col in df_shopify.columns else pd.Series("", index=df_shopify.index)
