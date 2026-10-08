@@ -120,6 +120,13 @@ def _result(log: Path) -> None:
                  "li vedi nella tabella qui sotto.")
     if s["no_price"]:
         st.caption(f"{num(s['no_price'])} prodotti senza prezzo nella newsletter sono stati saltati.")
+    if s["not_available"]:
+        with st.expander(f"⏭️ {num(len(s['not_available']))} prodotti saltati perché non "
+                         "disponibili (etichetta azzurra, non «Disponibile»)"):
+            st.text("\n".join(s["not_available"]))
+    if s["no_label"]:
+        st.caption(f"⚠️ Per {num(s['no_label'])} prodotti non ho trovato l'etichetta di "
+                   "disponibilità: li ho trattati come disponibili (dettaglio nel registro).")
 
     _report_table(s["report"])
     with st.expander("🔎 Dettaglio tecnico (registro completo)"):

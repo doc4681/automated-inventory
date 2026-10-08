@@ -4,7 +4,7 @@ di www.modelcarswholesale.com.
 
 Funzioni pure su BeautifulSoup (testabili su HTML salvato):
   parse_sidebar(soup)      -> list[Newsletter]
-  parse_newsletter(soup)   -> list[Product]
+  parse_newsletter(soup)   -> list[Product]  (con l'etichetta di disponibilità)
   parse_detail(soup)       -> dict con campi extra (materiale, note)
 """
 
@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, asdict
 from bs4 import BeautifulSoup
+
+import etichette
 
 BASE_URL = "https://www.modelcarswholesale.com"
 IMG_BASE = "https://bucket.carmodel.com/images/"
@@ -43,6 +45,8 @@ class Product:
     material: str = ""     # da pagina di dettaglio
     note: str = ""         # da pagina di dettaglio (es. 'WITH OPENINGS - APRIBILE')
     is_special: bool = False  # costo preso da 'Special price' (promo, non listino)
+    etichetta: str = ""    # testo dell'etichetta sulla card (es. 'Disponibile', 'Dal 17 Lug')
+    disponibilita: str = ""  # etichette.DISPONIBILE / NON_DISPONIBILE / '' (non trovata)
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -154,6 +158,7 @@ def parse_product_card(card) -> Product | None:
                 cost, is_special = float(pm.group(1).replace(",", ".")), True
 
     availability = _text(card.select_one(".availableOnText"))
+    disponibilita, etichetta = etichette.leggi(card)
 
     return Product(
         site_id=site_id,
@@ -167,6 +172,8 @@ def parse_product_card(card) -> Product | None:
         detail_url=detail_url,
         image_url=image_url,
         is_special=is_special,
+        etichetta=etichetta,
+        disponibilita=disponibilita,
     )
 
 

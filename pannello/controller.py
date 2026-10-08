@@ -339,6 +339,21 @@ def mcws_diagnosis(path: Path | None) -> tuple[list[str], Path | None]:
     return lines[-40:], (shot if shot and shot.exists() else None)
 
 
+def _not_available(text: str) -> list[str]:
+    """Le righe dei prodotti saltati perché l'etichetta non è «Disponibile» (riepilogo
+    finale di newsletter e inventario: «Saltati perché NON DISPONIBILI …: N» + «  - …»)."""
+    lines = text.splitlines()
+    for i, l in enumerate(lines):
+        if l.startswith("Saltati perché NON DISPONIBILI"):
+            out = []
+            for nxt in lines[i + 1:]:
+                if not nxt.startswith("  - "):
+                    break
+                out.append(nxt[4:].strip())
+            return out
+    return []
+
+
 def newsletter_summary(path: Path | None) -> dict:
     """Riassunto leggibile di una run newsletter, ricavato dal suo log."""
     text = Path(path).read_text(encoding="utf-8", errors="replace") if path and Path(path).exists() else ""
@@ -360,6 +375,8 @@ def newsletter_summary(path: Path | None) -> dict:
         "existing": num("esistenti (saltati):"),
         "to_create": num("da creare (dry-run):"),
         "no_price": num("Prodotti senza prezzo (saltati):"),
+        "not_available": _not_available(text),
+        "no_label": num("Etichetta di disponibilità non trovata (processati come prima):"),
         "create_errors": num("ERRORI in creazione su Shopify:"),
         "errors": errors,
         "report": Path(report.group(1).strip()) if report else None,
@@ -463,7 +480,7 @@ def inventory_summary(path: Path | None) -> dict:
         return int(m.group(1)) if m else 0
 
     def line(label):
-        m = re.search(rf"^{re.escape(label)}\s*(.+)$", text, re.M)
+        m = re.search(rf"^[ \t]*{re.escape(label)}\s*(.+)$", text, re.M)
         return m.group(1).strip() if m else ""
 
     steps = re.findall(r"▶ \[(\d)/4\]", text)
@@ -478,6 +495,8 @@ def inventory_summary(path: Path | None) -> dict:
         "costs": num("costi cambiati:"),
         "moved": num("spostati su Vroomi Models:"),
         "available": num("disponibili ora nel negozio:"),
+        "not_available": _not_available(text),
+        "labels_line": line("Etichette di disponibilità:"),
         "applied": num("Aggiornati su Shopify:"),
         "apply_errors": num("Errori su Shopify:"),
         "applied_done": "Aggiornati su Shopify:" in text,
