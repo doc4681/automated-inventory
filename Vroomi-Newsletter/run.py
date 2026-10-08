@@ -17,6 +17,9 @@ Esempi:
   python run.py --newsletter 15149       # solo quella newsletter (MINICHAMPS)
   python run.py --newsletter 15149 --limit 1 --apply   # crea 1 solo DRAFT (test)
   python run.py --apply                  # elabora tutte le newsletter valide
+  python run.py --apply --da-controllo output/da_creare_<data>.json
+                                         # crea le bozze trovate da un controllo, SENZA
+                                         # riaprire MCWS (niente Chrome, niente login)
 """
 
 from __future__ import annotations
@@ -248,7 +251,13 @@ def main() -> int:
     ap.add_argument("--max-newsletters", type=int, default=0, help="max newsletter da elaborare")
     ap.add_argument("--no-enrich", action="store_true", help="non aprire la pagina di dettaglio")
     ap.add_argument("--headless", action="store_true")
+    ap.add_argument("--da-controllo", metavar="FILE",
+                    help="con --apply: crea le bozze salvate da un controllo (non apre MCWS)")
     args = ap.parse_args()
+    if args.da_controllo:
+        if not args.apply:
+            ap.error("--da-controllo va usato insieme a --apply")
+        return create_from_check(Path(args.da_controllo))
 
     cat = catalog.Catalog()
     only_ids = set(x.strip() for x in args.newsletter.split(",")) if args.newsletter else None
@@ -283,6 +292,7 @@ def main() -> int:
 
     bs = session.BrowserSession(headless=args.headless)
     report: list[dict] = []
+    pending: list[dict] = []        # prodotti «da creare» del controllo (per --da-controllo)
     skipped_brands: list[tuple[str, str]] = []
     created = existing = no_price = no_markup = errors = 0
     processed = 0
@@ -404,7 +414,7 @@ def main() -> int:
                 print(f"      sku={p.sku} costo={p.cost} x{payload['_markup']} -> €{payload['price']}"
                       f"  {admin_url}")
 
-                report.append({
+                row = {
                     "newsletter_id": n.id, "brand": n.brand, "status": status,
                     "site_id": p.site_id, "sku": p.sku, "title": payload["title"],
                     "vendor": payload["vendor"], "scale": p.scale,
@@ -412,13 +422,23 @@ def main() -> int:
                     "cost": p.cost, "markup": payload["_markup"], "price": payload["price"],
                     "material": p.material, "note": p.note,
                     "image_url": p.image_url, "detail_url": p.detail_url, "admin_url": admin_url,
-                })
+                }
+                report.append(row)
+                if status in ("DA-CREARE", "DRY-RUN"):
+                    pending.append({"payload": payload, "row": row})
             if args.limit and processed >= args.limit:
                 break
     finally:
         bs.quit()
 
-    # report
+    return _finish(report, processed=processed, created=created, existing=existing,
+                   errors=errors, no_price=no_price, no_markup=no_markup, apply=args.apply,
+                   pending=pending)
+
+
+def _finish(report: list, processed: int, created: int, existing: int, errors: int,
+            no_price: int, no_markup: int, apply: bool, pending: list | None = None) -> int:
+    """Scrive il report e il riepilogo finale (le righe che legge il pannello)."""
     ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     rep = OUT / f"report_{ts}.csv"
     if report:
@@ -426,6 +446,13 @@ def main() -> int:
             w = csv.DictWriter(f, fieldnames=list(report[0].keys()))
             w.writeheader()
             w.writerows(report)
+    if pending and not apply:
+        # Il pannello li passa a «Crea le bozze» (--da-controllo): niente secondo login
+        saved = OUT / f"da_creare_{ts}.json"
+        saved.write_text(json.dumps(pending, ensure_ascii=False), encoding="utf-8")
+        for old in sorted(OUT.glob("da_creare_*.json"))[:-10]:
+            old.unlink(missing_ok=True)
+        print(f"Da creare salvati: {saved}")
 
     print("\n" + "=" * 60)
     print(f"Prodotti elaborati (con prezzo): {processed}")
@@ -439,10 +466,69 @@ def main() -> int:
         print(f"ERRORI in creazione su Shopify: {errors} (dettaglio nel report)")
     if report:
         print(f"Report: {rep}")
-    if not args.apply:
+    if not apply:
         print("\n[DRY-RUN] Nessuna scheda scritta. Aggiungi --apply per creare i DRAFT.")
     return 1 if errors else 0
 
+
+MAX_CHECK_AGE_H = 48
+
+
+def create_from_check(path: Path) -> int:
+    """Crea le bozze salvate da un controllo (output/da_creare_*.json) senza riaprire
+    MCWS: i dati delle schede sono già quelli mostrati dal controllo. Prima di creare
+    ogni scheda ricontrolla su Shopify che non esista già (rilanciare è sicuro)."""
+    if not path.exists():
+        print(f"ERRORE: non trovo il controllo da usare ({path}): rifai «Controlla».")
+        return 1
+    age_h = (datetime.now().timestamp() - path.stat().st_mtime) / 3600
+    if age_h > MAX_CHECK_AGE_H:
+        print(f"ERRORE: il controllo ha più di {MAX_CHECK_AGE_H} ore: rifai «Controlla» "
+              "per avere prezzi e prodotti aggiornati.")
+        return 1
+    items = json.loads(path.read_text(encoding="utf-8"))
+    print(f"Creo le bozze trovate dal controllo ({path.name}): {len(items)} prodotti.")
+    print("  (uso i dati del controllo: non riapro modelcarswholesale.com, niente Chrome)")
+    try:
+        sh = Shopify.from_env()
+        print("  [Shopify] token OK (store Vroomi)")
+    except Exception as e:
+        print(f"\nERRORE: Shopify non disponibile ({e}).\n"
+              "Controlla SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET in credenziali.env.")
+        return 1
+    if any(it["payload"].get("quantity") for it in items):
+        try:
+            sh.location_id()
+        except Exception as e:
+            print(f"\nERRORE: non riesco a leggere il magazzino Shopify ({e}).\n"
+                  + MSG_SCOPE_MAGAZZINO)
+            return 1
+
+    report: list[dict] = []
+    created = existing = errors = 0
+    for it in items:
+        payload, row = it["payload"], dict(it["row"])
+        dup = sh.find_variant_by_sku(row.get("sku", ""), row.get("site_id", ""))
+        if dup:
+            existing += 1
+            row["status"], row["admin_url"] = "ESISTE", sh.admin_url(dup["productId"])
+        else:
+            try:
+                res = sh.create_draft_product(payload)
+                created += 1
+                row["status"], row["admin_url"] = "CREATO", res["admin_url"]
+            except Exception as e:
+                errors += 1
+                row["status"] = f"ERRORE: {e}"
+                if "ACCESS_DENIED" in str(e) or "access denied" in str(e).lower():
+                    print(f"  [{row['status']}]\n\nERRORE: permesso negato da Shopify.\n"
+                          + MSG_SCOPE_MAGAZZINO)
+                    return 1
+        print(f"  [{row['status']}] {payload['title'][:70]}")
+        print(f"      sku={row.get('sku')} -> €{payload['price']}  {row.get('admin_url', '')}")
+        report.append(row)
+    return _finish(report, processed=len(items), created=created, existing=existing,
+                   errors=errors, no_price=0, no_markup=0, apply=True)
 
 if __name__ == "__main__":
     try:

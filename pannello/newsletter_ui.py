@@ -55,6 +55,16 @@ def _start(apply: bool, ids: str | None = None) -> None:
         st.session_state["nl_error"] = str(e)
 
 
+def _start_from_check(ids: str, pending_file: str) -> None:
+    """«Ora crea queste N bozze»: usa i prodotti trovati dal controllo appena fatto,
+    senza riaprire MCWS (niente Chrome, niente login). Senza il file (controllo fatto
+    con una versione vecchia) rifà tutto come prima."""
+    try:
+        ctl.start_newsletter(ids, apply=True, from_check=pending_file)
+    except Exception as e:
+        st.session_state["nl_error"] = str(e)
+
+
 def _report_table(path: Path | None) -> None:
     if not path or not path.exists():
         return
@@ -101,7 +111,8 @@ def _result(log: Path) -> None:
                 f"{num(s['existing'])} già nel negozio. Non è stato creato niente.")
         if s["to_create"]:
             st.button(f"✅  Ora crea queste {num(s['to_create'])} bozze su Shopify", type="primary",
-                      on_click=_start, args=(True, ids), key="nl_apply_after_check",
+                      on_click=_start_from_check, args=(ids, s["pending_file"]),
+                      key="nl_apply_after_check",
                       disabled=not ctl.credentials_status()["shopify"])
 
     if s["create_errors"]:
@@ -129,9 +140,14 @@ def _progress() -> None:
         if running:
             with st.container(border=True):
                 st.markdown("### ⏳ Sto lavorando…")
-                st.markdown("Si apre una finestra di **Chrome** per entrare su MCWS: "
-                            "**non chiuderla**. Puoi anche chiudere questa pagina: il lavoro "
-                            "continua lo stesso.")
+                if ctl.newsletter_info().get("from_check"):
+                    st.markdown("Creo su Shopify le bozze trovate dal controllo (non serve "
+                                "Chrome). Puoi anche chiudere questa pagina: il lavoro "
+                                "continua lo stesso.")
+                else:
+                    st.markdown("Si apre una finestra di **Chrome** per entrare su MCWS: "
+                                "**non chiuderla**. Puoi anche chiudere questa pagina: il "
+                                "lavoro continua lo stesso.")
                 last = _last_line(log)
                 if last:
                     st.caption(f"Adesso: {last}")

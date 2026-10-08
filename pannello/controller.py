@@ -251,9 +251,11 @@ CRED_KEYS = ("MCWS_USERNAME", "MCWS_PASSWORD", "SHOPIFY_STORE_DOMAIN",
              "SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET", "SHOPIFY_ADMIN_TOKEN")
 
 
-def start_newsletter(ids: str, apply: bool) -> Path:
+def start_newsletter(ids: str, apply: bool, from_check: str = "") -> Path:
     """Lancia Vroomi-Newsletter in background: ids = "15538" o "15538,15540"
-    (vuoto = tutte le newsletter valide). apply=False → prova, True → bozze."""
+    (vuoto = tutte le newsletter valide). apply=False → prova, True → bozze.
+    from_check = file «da creare» salvato da un controllo: crea quelle bozze senza
+    riaprire MCWS (niente Chrome, niente login)."""
     if newsletter_running():
         raise RuntimeError("Un'importazione newsletter è già in corso.")
     LOG_DIR.mkdir(exist_ok=True)
@@ -271,11 +273,15 @@ def start_newsletter(ids: str, apply: bool) -> Path:
         args += ["--newsletter", ids]
     if apply:
         args.append("--apply")
+        if from_check:
+            args += ["--da-controllo", from_check]
     with open(logfile, "w") as lf:
         proc = subprocess.Popen(args, stdout=lf, stderr=subprocess.STDOUT,
                                 cwd=str(NEWSLETTER_DIR), env=env, start_new_session=True)
     NEWSLETTER_STATE.write_text(f"{proc.pid} {logfile}", encoding="utf-8")
-    NEWSLETTER_INFO.write_text(json.dumps({"apply": apply, "ids": ids}), encoding="utf-8")
+    NEWSLETTER_INFO.write_text(json.dumps({"apply": apply, "ids": ids,
+                                           "from_check": bool(apply and from_check)}),
+                               encoding="utf-8")
     return logfile
 
 
@@ -344,7 +350,9 @@ def newsletter_summary(path: Path | None) -> dict:
     report = re.search(r"^Report: (.+)$", text, re.M)
     errors = [l.strip() for l in text.splitlines() if l.strip().startswith("ERRORE")]
     skipped = re.search(r"^Scartate \(\d+\): (.+)$", text, re.M)
+    pending = re.search(r"^Da creare salvati: (.+)$", text, re.M)
     return {
+        "pending_file": pending.group(1).strip() if pending else "",
         "newsletters": num("Newsletter valide da elaborare:"),
         "none_found": "NESSUNA newsletter" in text,
         "skipped": skipped.group(1) if skipped else "",
@@ -468,6 +476,7 @@ def inventory_summary(path: Path | None) -> dict:
         "out": num("diventano esauriti:"),
         "prices": num("prezzi cambiati:"),
         "costs": num("costi cambiati:"),
+        "moved": num("spostati su Vroomi Models:"),
         "available": num("disponibili ora nel negozio:"),
         "applied": num("Aggiornati su Shopify:"),
         "apply_errors": num("Errori su Shopify:"),
