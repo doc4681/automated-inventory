@@ -142,6 +142,10 @@ newsletter o l'inventario. Se l'installazione non riesce il pannello resta com'e
 (registro in `logs/aggiornamento_<data>.log`). La versione installata è nel file `.versione` (scritto
 da `installa.sh`; le copie installate prima di questa funzione non l'hanno, quindi il pannello propone
 subito un aggiornamento). Le copie scaricate con `git` non vengono toccate: si aggiornano con `git pull`.
+In più, **a ogni avvio con `AVVIA PANNELLO.command`** controlla subito: se c'è una versione nuova
+compare una notifica di macOS, la scarica da solo (circa un minuto, nella finestra del Terminale
+vedi cosa cambia) e poi apre il pannello già aggiornato. Senza rete, o se sta girando il catalogo,
+una newsletter o l'inventario, apre il pannello com'è e riprova la volta dopo.
 Da Terminale: `.venv/bin/python -m pannello.aggiornamenti` (controlla adesso).
 
 Perché niente blocchi: macOS mette in "quarantena" solo i file scaricati da browser, Drive, WhatsApp o

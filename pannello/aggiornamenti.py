@@ -13,6 +13,9 @@ aggiornamenti.py — il pannello si tiene aggiornato da solo.
 
 Le copie scaricate con git (cartella .git) non vengono toccate: si aggiornano con git pull.
 
+Inoltre a OGNI avvio con AVVIA PANNELLO.command (at_launch) controlla subito e, se c'è una
+versione nuova, la installa da solo prima di aprire il pannello (con una notifica di macOS).
+
 Da Terminale (dalla cartella principale):
   .venv/bin/python -m pannello.aggiornamenti           # controlla adesso
   .venv/bin/python -m pannello.aggiornamenti --esegui  # aggiorna (senza riaprire il pannello)
@@ -280,14 +283,10 @@ def _notify(text: str) -> None:
                        capture_output=True)
 
 
-def run_update(panel_pid: int | None) -> int:
-    """Il lavoro vero (gira in background, lanciato da start_update)."""
-    log("Aggiornamento del programma Vroomi")
-    if is_dev_copy():
-        log("✗ Copia scaricata con git: aggiornala con  git pull.")
-        _update_state(in_corso_pid=None, errore_aggiornamento="copia git: usa git pull")
-        return 1
-    time.sleep(2)                       # lascia al pannello il tempo di mostrare l'avviso
+def _update_files() -> bool:
+    """Installa l'ultima versione su questa cartella (+ dipendenze se cambiate) e
+    aggiorna lo stato. False se non è riuscito: i file restano com'erano o vanno
+    sistemati rilanciando (installa.sh sostituisce solo i file del programma)."""
     req = REPO / "requirements.txt"
     req_before = _file_hash(req)
     try:
@@ -301,13 +300,26 @@ def run_update(panel_pid: int | None) -> int:
         log(f"✗ Aggiornamento non riuscito: {e}")
         _update_state(in_corso_pid=None, errore_aggiornamento=str(e))
         _notify("Aggiornamento non riuscito: il pannello resta com'era.")
-        return 1
+        return False
 
     local, _ref = local_version()
     _update_state(in_corso_pid=None, errore_aggiornamento=None,
                   aggiornato_il=datetime.now().isoformat(timespec="seconds"),
                   remoto=local or _load_state().get("remoto"), novita=[])
     log(f"✓ Programma aggiornato (versione {(local or '?')[:7]}).")
+    return True
+
+
+def run_update(panel_pid: int | None) -> int:
+    """Il lavoro vero (gira in background, lanciato da start_update)."""
+    log("Aggiornamento del programma Vroomi")
+    if is_dev_copy():
+        log("✗ Copia scaricata con git: aggiornala con  git pull.")
+        _update_state(in_corso_pid=None, errore_aggiornamento="copia git: usa git pull")
+        return 1
+    time.sleep(2)                       # lascia al pannello il tempo di mostrare l'avviso
+    if not _update_files():
+        return 1
 
     if panel_pid:
         _close_panel(panel_pid)
@@ -319,12 +331,55 @@ def run_update(panel_pid: int | None) -> int:
     return 0
 
 
+def at_launch() -> None:
+    """Ultimo passo di AVVIA PANNELLO.command, al posto di «streamlit run»: a OGNI avvio
+    controlla su GitHub se c'è una versione nuova; se c'è la installa (con le notifiche)
+    e rilancia AVVIA PANNELLO.command aggiornato. Poi apre il pannello. Qualsiasi
+    problema (niente rete, GitHub lento, errore) → apre il pannello com'è.
+    Gira con exec: il file AVVIA PANNELLO.command può essere sostituito senza danni."""
+    try:
+        if os.environ.get("VROOMI_AGGIORNATO") != "1" and not is_dev_copy():
+            print("▶ Controllo se c'è una versione nuova del programma…", flush=True)
+            s = status(force=True)
+            if s["serve"]:
+                busy = busy_reason()
+                if busy:
+                    print(f"ℹ️  C'è un aggiornamento, ma {busy}: lo installo al prossimo avvio "
+                          "(o dal pannello, pulsante «Aggiorna adesso»).")
+                else:
+                    print("🆕 È disponibile una versione nuova: la scarico (circa un minuto)…")
+                    for n in s["novita"]:
+                        print(f"   • {n}")
+                    _notify("Trovato un aggiornamento del programma: lo scarico, "
+                            "poi si apre il pannello.")
+                    if _update_files():
+                        _notify("Programma aggiornato all'ultima versione.")
+                        print("✅ Programma aggiornato. Riparto con la versione nuova…\n", flush=True)
+                        os.environ["VROOMI_AGGIORNATO"] = "1"     # niente secondo controllo
+                        os.execv("/bin/bash", ["/bin/bash", str(LAUNCHER)])
+                    print("⚠️  Aggiornamento non riuscito: apro il pannello com'era "
+                          "(riprova dal pannello o al prossimo avvio).")
+            elif s["remoto"] and not s["errore_controllo"]:
+                print("✓ Il programma è all'ultima versione.")
+            else:
+                print("ℹ️  Non riesco a controllare gli aggiornamenti (connessione?): "
+                      "apro il pannello com'è.")
+    except Exception as e:  # noqa: BLE001 — il pannello deve aprirsi comunque
+        print(f"ℹ️  Controllo aggiornamenti saltato ({e}).")
+    print("", flush=True)
+    os.execv(sys.executable, [sys.executable, "-m", "streamlit", "run", str(REPO / "app.py")])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Aggiornamenti del programma Vroomi")
     ap.add_argument("--esegui", action="store_true", help="aggiorna adesso")
     ap.add_argument("--riavvia", type=int, metavar="PID",
                     help="(uso interno) PID del pannello da chiudere e riaprire")
+    ap.add_argument("--avvio", action="store_true",
+                    help="(uso interno, AVVIA PANNELLO.command) controlla, aggiorna, apre il pannello")
     args = ap.parse_args()
+    if args.avvio:
+        at_launch()
     if args.esegui:
         return run_update(args.riavvia)
     s = status(force=True)
