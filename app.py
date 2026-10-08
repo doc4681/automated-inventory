@@ -5,6 +5,7 @@ Pagina iniziale "Cosa vuoi fare?" con due attività principali:
   • Aggiorna l'inventario          (pannello/inventario_ui.py)
   • Crea prodotti dalle newsletter (pannello/newsletter_ui.py)
 e, sotto, Catalogo fornitori automatico (pannello/catalogo_ui.py) e Impostazioni.
+In cima a ogni pagina l'avviso degli aggiornamenti del programma (pannello/aggiornamenti_ui.py).
 Su Streamlit Cloud (Linux), PER ORA, si apre la pagina di prima ("Sync inventario", con la
 sua logica di calcolo congelata in inventario_precedente/) finché non sistemiamo la nuova.
 
@@ -34,6 +35,7 @@ from pannello.inventario_ui import render_inventario
 from pannello.newsletter_ui import render_newsletter
 from pannello.catalogo_ui import render_catalogo
 from pannello.impostazioni_ui import render_impostazioni
+from pannello.aggiornamenti_ui import update_banner
 
 st.set_page_config(
     page_title="Vroomi",
@@ -42,6 +44,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 apply_style()
+update_banner()   # «È disponibile un aggiornamento» (controllo una volta al giorno)
 
 {
     "home": render_home,

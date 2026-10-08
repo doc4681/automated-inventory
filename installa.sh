@@ -16,6 +16,10 @@
 #  Aggiornando, NON vengono toccati: credenziali.env, dati/, RISULTATO/, logs/,
 #  l'ambiente .venv e i report delle newsletter. Vengono solo sostituiti i
 #  file del programma.
+#
+#  Lo usa anche il pannello per «Aggiorna adesso» (pannello/aggiornamenti.py),
+#  con VROOMI_NO_OPEN=1: il pannello lo riapre da sé dopo aver chiuso il vecchio.
+#  In .versione resta scritta la versione installata (codice del commit + ramo).
 # ════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -31,6 +35,8 @@ curl -fsSL "$ZIP_URL" -o "$TMP/repo.zip"
 unzip -q "$TMP/repo.zip" -d "$TMP"
 SRC=$(find "$TMP" -mindepth 1 -maxdepth 1 -type d | head -1)
 [[ -f "$SRC/app.py" && -d "$SRC/pannello" ]] || { echo "❌ Download incompleto: riprova."; exit 1; }
+# Versione scaricata: GitHub scrive il codice del commit come commento dello zip
+VERSIONE=$(unzip -z "$TMP/repo.zip" 2>/dev/null | grep -Eo '^[0-9a-f]{40}$' | head -1 || true)
 
 # Non installare sopra una cartella che non è Vroomi (es. la Home per errore)
 if [[ -d "$DEST" && -n "$(ls -A "$DEST" 2>/dev/null)" && ! -f "$DEST/app.py" ]]; then
@@ -74,6 +80,13 @@ if [[ ! -f "$DEST/credenziali.env" ]]; then
   fi
 fi
 
+# Versione installata: il pannello la confronta con GitHub per proporre gli aggiornamenti
+if [[ -n "$VERSIONE" ]]; then
+  printf '%s\n%s\n' "$VERSIONE" "$REF" > "$DEST/.versione"
+else
+  rm -f "$DEST/.versione"        # sconosciuta: il pannello proporrà di aggiornare
+fi
+
 find "$DEST" -name "*.command" -exec chmod +x {} +
 chmod +x "$DEST/pipeline/run.sh" 2>/dev/null || true
 # Per sicurezza: togli l'eventuale quarantena rimasta (non dà errore se non c'è)
@@ -90,8 +103,9 @@ if [[ ! -f "$DEST/credenziali.env" ]]; then
 fi
 echo "   Per aggiornare in futuro rilancia la stessa riga."
 
-# Sul Mac apre subito il pannello (in una finestra del Terminale tutta sua)
-if [[ "$(uname)" == "Darwin" ]]; then
+# Sul Mac apre subito il pannello (in una finestra del Terminale tutta sua),
+# tranne quando l'aggiornamento parte dal pannello stesso (lo riapre lui)
+if [[ "$(uname)" == "Darwin" && "${VROOMI_NO_OPEN:-0}" != "1" ]]; then
   echo "▶ Apro il pannello…"
   open "$DEST/AVVIA PANNELLO.command"
 fi

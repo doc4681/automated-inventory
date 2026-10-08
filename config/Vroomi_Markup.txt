@@ -1,6 +1,8 @@
 TRADEMARK	Markup %
 # Fascia economica (solo Newsletter): se il costo MCWS e' sotto la cifra indicata, si usa questo markup al posto di quello del brand
-COSTO SOTTO 50		2,30
+# DISATTIVATA per ora (ott 2026): per riattivarla togli il "# " davanti a COSTO SOTTO 50
+# Da disattivata valgono le fasce di sempre, uguali all'inventario: sotto 10 euro x2,2 - sotto 20 euro x1,9
+# COSTO SOTTO 50		2,30
 Alerte		1,50
 Autoart		1,50
 CMR		1,50
