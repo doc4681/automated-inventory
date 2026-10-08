@@ -471,7 +471,7 @@ def main() -> int:
 
     return _finish(report, processed=processed, created=created, existing=existing,
                    errors=errors, no_price=no_price, no_markup=no_markup, apply=args.apply,
-                   pending=pending, not_available=not_available, no_label=no_label)
+                   pending=pending, not_available=not_available or [], no_label=no_label)
 
 
 def _skipped_row(n, p, status: str) -> dict:
@@ -514,13 +514,19 @@ def _finish(report: list, processed: int, created: int, existing: int, errors: i
     print(f"  creati:   {created}")
     print(f"  esistenti (saltati): {existing}")
     print(f"  da creare (dry-run): {processed - created - existing - errors}")
-    print(f"Prodotti senza prezzo (saltati): {no_price}")
-    if no_markup:
-        print(f"Prodotti di brand non validi / senza markup (saltati): {no_markup}")
-    print(f"Saltati perché NON DISPONIBILI (etichetta azzurra, non «Disponibile»): "
-          f"{len(not_available or [])}")
-    for r in not_available or []:
-        print(f"  - {r}")
+    if not_available is None:
+        # «Crea le bozze» dopo un controllo: qui ci sono solo i prodotti da creare,
+        # i saltati (non disponibili, senza prezzo, …) li ha già elencati il controllo.
+        print("I prodotti saltati (non disponibili, senza prezzo, marchio senza ricarico) "
+              "sono nel registro del «Controlla»: qui si creano solo quelli trovati da creare.")
+    else:
+        print(f"Prodotti senza prezzo (saltati): {no_price}")
+        if no_markup:
+            print(f"Prodotti di brand non validi / senza markup (saltati): {no_markup}")
+        print(f"Saltati perché NON DISPONIBILI (etichetta azzurra, non «Disponibile»): "
+              f"{len(not_available)}")
+        for r in not_available:
+            print(f"  - {r}")
     if no_label:
         print(f"Etichetta di disponibilità non trovata (processati come prima): {len(no_label)}")
         for r in no_label[:30]:
