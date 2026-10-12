@@ -106,6 +106,9 @@ DOVE FINISCONO LE SCHEDE
 Su Shopify come BOZZA:
 https://admin.shopify.com/store/scn8p4-h7/products
 Un riepilogo di ogni run è salvato nella cartella  output/  (file report_...csv).
+Ogni scheda riceve TUTTE le foto del prodotto (quelle della sua pagina su
+modelcarswholesale.com, in grande), non solo la miniatura della newsletter.
+Nel registro, accanto al prezzo, « foto=N » dice quante ne ha prese.
 
 
 DOMANDE FREQUENTI
