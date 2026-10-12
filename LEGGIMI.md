@@ -87,7 +87,7 @@ Due modi di usarlo, stesso programma:
 
 La scheda creata è come quelle già in negozio: titolo `MARCA AUTO - DESCRIZIONE`, SKU = codice
 produttore, barcode = ID MCWS, costo = prezzo netto, prezzo = costo × ricarico (sotto 10 € ×2,2,
-sotto 20 € ×1,9, come l'inventario) arrotondato a ,90, foto grande, materiale e note dalla scheda MCWS, campi
+sotto 20 € ×1,9, come l'inventario) arrotondato a ,90, tutte le foto della scheda MCWS (grandi), materiale e note dalla scheda MCWS, campi
 `custom.*` (per i modelli da corsa anche evento, pilota e sottocategoria). I prodotti già presenti
 (stesso SKU o barcode) vengono saltati: rilanciare è sicuro.
 

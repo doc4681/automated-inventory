@@ -6,6 +6,7 @@ Funzioni pure su BeautifulSoup (testabili su HTML salvato):
   parse_sidebar(soup)      -> list[Newsletter]
   parse_newsletter(soup)   -> list[Product]  (con l'etichetta di disponibilità)
   parse_detail(soup)       -> dict con campi extra (materiale, note)
+  parse_images(soup, id)   -> list[str] TUTTE le foto del prodotto (versione grande)
 """
 
 from __future__ import annotations
@@ -41,7 +42,8 @@ class Product:
     cost: float | None    # prezzo netto wholesale (il nostro costo)
     availability: str     # 'Dal 17 Lug' / ''
     detail_url: str
-    image_url: str
+    image_url: str        # foto principale (la miniatura della newsletter, in grande)
+    image_urls: list[str] = field(default_factory=list)  # TUTTE le foto, la principale per prima
     material: str = ""     # da pagina di dettaglio
     note: str = ""         # da pagina di dettaglio (es. 'WITH OPENINGS - APRIBILE')
     is_special: bool = False  # costo preso da 'Special price' (promo, non listino)
@@ -120,10 +122,12 @@ def parse_product_card(card) -> Product | None:
     # cartella dimensione con 'ws-lg'. Ricostruire da site_id NON basta: molti
     # file hanno un suffisso e 'ws-lg/{site_id}.jpg' darebbe 404.
     if img_src and "/images/" in img_src:
-        fname = img_src.rsplit("/", 1)[-1]
-        image_url = IMG_BASE + "ws-lg/" + fname
+        image_url = large_image_url(img_src)
     else:
         image_url = IMG_LARGE.format(id=site_id)
+    # altre foto eventualmente presenti sulla card; le altre arrivano dalla
+    # pagina di dettaglio (parse_images), aperta da run.py
+    image_urls = merge_images([image_url], _bucket_images(str(card)))
 
     scale = _text(_pick(card, ".row-one .scale", ".scale"))
     scale = re.sub(r"\s+", "", scale)  # '1/ 18' -> '1/18'
@@ -171,6 +175,7 @@ def parse_product_card(card) -> Product | None:
         availability=availability,
         detail_url=detail_url,
         image_url=image_url,
+        image_urls=image_urls,
         is_special=is_special,
         etichetta=etichetta,
         disponibilita=disponibilita,
@@ -239,3 +244,80 @@ def parse_detail(soup: BeautifulSoup) -> dict:
             out["note"] = re.sub(r"\s{2,}", " ", t).strip()
             break
     return out
+
+
+# ── foto ─────────────────────────────────────────────────────────────────────
+# Le foto stanno su bucket.carmodel.com/images/{cartella}/{file}: la cartella è
+# la dimensione (es. '214-161' miniatura, 'ws-lg' grande). Si cercano in tutto
+# l'HTML (src, data-src, data-zoom, href dei link alla foto grande, srcset...) per
+# non dipendere da come è fatta la galleria del sito.
+_BUCKET_IMG_RE = re.compile(
+    r"(?:https?:)?//bucket\.carmodel\.com/images/([\w.-]+)/([\w.-]+\.(?:jpe?g|png|webp))", re.I)
+_NUM_STEM_RE = re.compile(r"^(\d+)(?:-\d+)?$")   # '198141' / '198141-3' -> 198141
+MAX_IMAGES = 30
+
+
+def large_image_url(src: str) -> str:
+    """Versione grande di una foto del bucket: stesso nome-file .jpg, cartella
+    'ws-lg' (le cartelle '*-lg' sono già grandi; gli altri formati restano come sono)."""
+    m = _BUCKET_IMG_RE.search(src or "")
+    if not m:
+        return src
+    folder, fname = m.group(1), m.group(2)
+    if folder.lower().endswith("-lg") or not fname.lower().endswith(".jpg"):
+        return f"{IMG_BASE}{folder}/{fname}"
+    return f"{IMG_BASE}ws-lg/{fname}"
+
+
+def _stem(url: str) -> str:
+    return url.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+
+
+def _bucket_images(html: str) -> list[str]:
+    """URL (grandi) delle foto del bucket trovate nell'HTML, nell'ordine della pagina."""
+    return [large_image_url(m.group(0)) for m in _BUCKET_IMG_RE.finditer(html or "")]
+
+
+def merge_images(*lists: list[str]) -> list[str]:
+    """Unisce liste di foto senza doppioni: la stessa foto in due dimensioni
+    (miniatura e grande) conta una volta sola. Max MAX_IMAGES."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for lst in lists:
+        for u in lst or []:
+            k = _stem(u)
+            if u and k not in seen:
+                seen.add(k)
+                out.append(u)
+    return out[:MAX_IMAGES]
+
+
+def _card_site_ids(card) -> set[str]:
+    ids = set()
+    for a in card.find_all("a", href=True):
+        segs = [s for s in a["href"].split("?")[0].split("/") if s.isdigit()]
+        if segs:
+            ids.add(segs[-1])
+    return ids
+
+
+def parse_images(soup: BeautifulSoup, site_id: str) -> list[str]:
+    """TUTTE le foto del prodotto `site_id` dalla sua pagina di dettaglio (versione
+    grande, nell'ordine della galleria). Si escludono le foto di ALTRI prodotti
+    mostrati nella pagina (correlati, «potrebbe interessarti»...):
+      - quelle dentro una card che porta a un altro prodotto;
+      - i file con nome numerico di un altro prodotto (le foto MCWS si chiamano
+        {site_id}.jpg o {site_id}-N.jpg)."""
+    others: set[str] = set()
+    for card in soup.select("div.product, .row.product"):
+        ids = _card_site_ids(card)
+        if ids and site_id not in ids:
+            others.update(_stem(u) for u in _bucket_images(str(card)))
+    out = []
+    for u in _bucket_images(str(soup)):
+        stem = _stem(u)
+        m = _NUM_STEM_RE.match(stem)
+        if stem in others or (m and m.group(1) != site_id):
+            continue
+        out.append(u)
+    return merge_images(out)

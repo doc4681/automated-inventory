@@ -31,6 +31,7 @@ import sys
 import json
 import argparse
 import os
+import requests
 from datetime import datetime
 from pathlib import Path
 
@@ -41,6 +42,21 @@ import catalog
 from shopify import Shopify
 
 OUT = Path(__file__).parent / "output"
+
+
+def foto_esistenti(urls: list[str]) -> list[str]:
+    """Tiene solo le foto che esistono davvero sul bucket: un indirizzo che non
+    esiste (404) farebbe comparire su Shopify una foto «non caricata». Se il
+    controllo non riesce (rete, timeout) la foto si tiene: meglio provarci."""
+    ok = []
+    for u in urls:
+        try:
+            if requests.head(u, timeout=15, allow_redirects=True).status_code in (404, 410):
+                continue
+        except requests.RequestException:
+            pass
+        ok.append(u)
+    return ok
 
 
 def quantita() -> int:
@@ -234,6 +250,7 @@ def build_payload(p: scraper.Product, cat: catalog.Catalog) -> dict:
                 "description": f"{nice} scale model car. Detailed replica for collectors. "
                                "Available at Vroomi."},
         "image_url": p.image_url,
+        "image_urls": p.image_urls or [p.image_url],
         "image_alt": f"{nice} {stag} scale model car by {vendor} — Vroomi",
         # meta per report
         "_cost": p.cost,
@@ -413,6 +430,10 @@ def main() -> int:
                         extra = scraper.parse_detail(det)
                         p.material = extra.get("material", "")
                         p.note = extra.get("note", "")
+                        # TUTTE le foto della galleria, non solo la miniatura
+                        p.image_urls = scraper.merge_images(
+                            p.image_urls, scraper.parse_images(det, p.site_id))
+                p.image_urls = foto_esistenti(p.image_urls) or [p.image_url]
 
                 payload = build_payload(p, cat)
                 processed += 1
@@ -443,6 +464,7 @@ def main() -> int:
 
                 print(f"  [{status}] {payload['title'][:70]}")
                 print(f"      sku={p.sku} costo={p.cost} x{payload['_markup']} -> €{payload['price']}"
+                      f"  foto={len(p.image_urls)}"
                       f"  etichetta {etichette.descrivi(p.disponibilita, p.etichetta)}  {admin_url}")
 
                 row = {
@@ -453,7 +475,8 @@ def main() -> int:
                     "car_model": payload["_car_model"], "year": payload["_year"],
                     "cost": p.cost, "markup": payload["_markup"], "price": payload["price"],
                     "material": p.material, "note": p.note,
-                    "image_url": p.image_url, "detail_url": p.detail_url, "admin_url": admin_url,
+                    "image_url": p.image_url, "immagini": " ".join(payload["image_urls"]),
+                    "detail_url": p.detail_url, "admin_url": admin_url,
                 }
                 report.append(row)
                 if status in ("DA-CREARE", "DRY-RUN"):
@@ -481,13 +504,14 @@ def _skipped_row(n, p, status: str) -> dict:
             "etichetta": p.etichetta, "site_id": p.site_id, "sku": p.sku,
             "title": f"{p.brand_auto} - {p.description}", "vendor": p.trademark,
             "scale": p.scale, "cost": p.cost if p.cost else "",
-            "image_url": p.image_url, "detail_url": p.detail_url}
+            "image_url": p.image_url, "immagini": " ".join(p.image_urls),
+            "detail_url": p.detail_url}
 
 
 # Colonne del report (i prodotti saltati hanno le stesse, in parte vuote)
 REPORT_FIELDS = ["newsletter_id", "brand", "status", "etichetta", "site_id", "sku", "title",
                  "vendor", "scale", "car_model", "year", "cost", "markup", "price",
-                 "material", "note", "image_url", "detail_url", "admin_url"]
+                 "material", "note", "image_url", "immagini", "detail_url", "admin_url"]
 
 
 def _finish(report: list, processed: int, created: int, existing: int, errors: int,

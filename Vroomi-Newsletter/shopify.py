@@ -149,7 +149,8 @@ class Shopify:
     def create_draft_product(self, p: dict) -> dict:
         """Crea un prodotto DRAFT con 1 variante (sku, barcode, prezzo, costo,
         magazzino tracciato con la quantità di p["quantity"], non vendibile oltre
-        la giacenza) e la foto, in un'unica chiamata productSet. `p` è il payload di run.build_payload."""
+        la giacenza) e TUTTE le foto (p["image_urls"]; la prima è la principale),
+        in un'unica chiamata productSet. `p` è il payload di run.build_payload."""
         mutation = """
         mutation($input: ProductSetInput!) {
           productSet(synchronous: true, input: $input) {
@@ -185,9 +186,13 @@ class Shopify:
         }
         if p.get("seo"):
             pin["seo"] = p["seo"]
-        if p.get("image_url"):
-            pin["files"] = [{"originalSource": p["image_url"], "contentType": "IMAGE",
-                             "alt": p.get("image_alt", p["title"])[:255]}]
+        # p["image_url"] da solo: bozze salvate da un controllo fatto prima che
+        # si prendessero tutte le foto
+        urls = p.get("image_urls") or ([p["image_url"]] if p.get("image_url") else [])
+        if urls:
+            alt = p.get("image_alt", p["title"])[:255]
+            pin["files"] = [{"originalSource": u, "contentType": "IMAGE", "alt": alt}
+                            for u in urls]
         res = self.gql(mutation, {"input": pin})["productSet"]
         if res["userErrors"]:
             raise RuntimeError(f"productSet: {res['userErrors']}")
